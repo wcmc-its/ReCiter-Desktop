@@ -1,0 +1,352 @@
+# ReCiter Desktop — Default Configuration
+# Scoring weights extracted from ReCiter application.properties
+
+institution:
+  email_suffixes: []
+  home_institution_keywords: []
+  institution_label: ""
+  org_unit_synonyms: {}
+  collaborating_keywords: []
+
+# PubMed API
+pubmed:
+  api_key: ""
+  batch_size: 200
+  rate_limit_with_key: 10
+  rate_limit_without_key: 3
+
+# Name scoring weights
+name_scoring:
+  first_name:
+    full_exact: 1.852
+    inferredInitials_exact: 0.441
+    full_fuzzy: -0.75
+    noMatch: -1.941
+    full_conflictingAllButInitials: -2.646
+    full_conflictingEntirely: -3.087
+    nullTargetAuthor_MatchNotAttempted: -1.323
+  last_name:
+    full_exact: 0.664
+    full_fuzzy: 0.332
+    full_conflictingEntirely: -0.996
+    nullTargetAuthor_MatchNotAttempted: -0.996
+  middle_name:
+    full_exact: 1.588
+    exact_singleInitial: 1.191
+    inferredInitials_exact: 0.794
+    noMatch: -0.794
+    full_fuzzy: 0
+    full_conflictingEntirely: -1.588
+    nullTargetAuthor_MatchNotAttempted: -1.588
+    identityNull_MatchNotAttempted: 0.794
+  modifier:
+    combinedFirstNameLastName: 0.451
+    incorrectOrder: -0.804
+    articleSubstringOfIdentity_lastName: -0.804
+    articleSubstringOfIdentity_firstMiddleName: -0.804
+    identitySubstringOfArticle_lastName: -1.608
+    identitySubstringOfArticle_firstName: -1.608
+    identitySubstringOfArticle_middleName: -0.804
+    identitySubstringOfArticle_firstMiddleName: 0.804
+    combinedMiddleNameLastName: 0
+
+  excluded_suffixes:
+    - "Jr"
+    - "Jr."
+    - "MD PhD"
+    - "MD-PhD"
+    - "PhD"
+    - "MD"
+    - "III"
+    - "III."
+    - "II"
+    - "II."
+    - "Sr"
+    - "Sr."
+
+# Email evidence
+email:
+  match_score: 8.0
+  no_match_score: -1.0
+
+# Affiliation evidence
+affiliation:
+  target_author:
+    positive_match_individual: 1.8
+    positive_match_institution: 1.0
+    null_score: 0.0
+    no_match: -0.8
+  non_target_author:
+    positive_match_individual: 0.598
+    positive_match_institution: 0.299
+    null_score: 0.0
+    no_match: -0.449
+    weight: 0.15
+    max_score: 0.897
+  institution_stopwords:
+    - "of"
+    - "the"
+    - "for"
+    - "and"
+    - "to"
+
+# Organization unit evidence
+organization:
+  department_match_score: 0.6
+  modifier_department: "Medicine"
+  modifier_score: 0.0
+  program_match_score: 1.083
+
+# Journal subfield evidence
+journal_subfield:
+  factor_score: 0.470
+  no_match_score: -0.470
+
+# Grant evidence
+grant:
+  match_score: 2.253
+
+# Gender evidence
+gender:
+  minimum_score: -1.36
+  range_score: 1.6
+
+# Education year discrepancy
+degree_year:
+  bachelor_year_weight: -7
+  # score_table is loaded from the parsed application.properties lookup
+  score_table:
+    -99: -12.6
+    -98: -12.5
+    -97: -12.4
+    -96: -12.3
+    -95: -12.2
+    -94: -12.1
+    -93: -12.0
+    -92: -11.9
+    -91: -11.8
+    -90: -11.7
+    -89: -11.6
+    -88: -11.5
+    -87: -11.4
+    -86: -11.3
+    -85: -11.2
+    -84: -11.1
+    -83: -11.0
+    -82: -10.9
+    -81: -10.8
+    -80: -10.7
+    -79: -10.6
+    -78: -10.5
+    -77: -10.4
+    -76: -10.3
+    -75: -10.2
+    -74: -10.1
+    -73: -10.0
+    -72: -9.9
+    -71: -9.8
+    -70: -9.7
+    -69: -9.6
+    -68: -9.5
+    -67: -9.4
+    -66: -9.3
+    -65: -9.2
+    -64: -9.1
+    -63: -9.0
+    -62: -8.9
+    -61: -8.8
+    -60: -8.7
+    -59: -8.6
+    -58: -8.5
+    -57: -8.4
+    -56: -8.3
+    -55: -8.2
+    -54: -8.1
+    -53: -8.0
+    -52: -7.9
+    -51: -7.8
+    -50: -7.7
+    -49: -7.6
+    -48: -7.5
+    -47: -7.4
+    -46: -7.3
+    -45: -7.2
+    -44: -7.1
+    -43: -7.0
+    -42: -6.9
+    -41: -6.8
+    -40: -6.7
+    -39: -6.6
+    -38: -6.5
+    -37: -6.4
+    -36: -6.3
+    -35: -6.2
+    -34: -6.1
+    -33: -6.0
+    -32: -5.9
+    -31: -5.8
+    -30: -5.7
+    -29: -5.6
+    -28: -5.5
+    -27: -5.4
+    -26: -5.3
+    -25: -5.2
+    -24: -5.1
+    -23: -5.0
+    -22: -4.9
+    -21: -4.8
+    -20: -4.7
+    -19: -4.6
+    -18: -4.5
+    -17: -4.4
+    -16: -4.3
+    -15: -4.2
+    -14: -4.1
+    -13: -4.0
+    -12: -3.78
+    -11: -3.56
+    -10: -3.34
+    -9: -3.12
+    -8: -2.9
+    -7: -2.68
+    -6: -2.46
+    -5: -2.24
+    -4: -2.02
+    -3: -1.8
+    -2: -1.58
+    -1: -1.36
+    0: -1.16
+    1: -0.96
+    2: -0.76
+    3: -0.56
+    4: -0.36
+    5: -0.175
+    6: 0.01
+    7: 0.195
+    8: 0.38
+    9: 0.55
+    10: 0.72
+    11: 0.89
+    12: 0.9
+    13: 0.9
+    14: 0.9
+    15: 0.9
+    16: 0.9
+    17: 0.9
+    18: 0.9
+    19: 0.9
+    20: 0.9
+    21: 0.9
+    22: 0.9
+    23: 0.9
+    24: 0.9
+    25: 0.9
+    26: 0.9
+    27: 0.9
+    28: 0.9
+    29: 0.9
+    30: 0.9
+    31: 0.9
+    32: 0.9
+    33: 0.9
+    34: 0.9
+    35: 0.9
+    36: 0.9
+    37: 0.9
+    38: 0.9
+    39: 0.9
+    40: 0.9
+    41: 0.9
+    42: 0.9
+    43: 0.9
+    44: 0.9
+    45: 0.9
+    46: 0.9
+    47: 0.9
+    48: 0.89
+    49: 0.88
+    50: 0.86
+    51: 0.85
+    52: 0.83
+    53: 0.81
+    54: 0.80
+    55: 0.77
+    56: 0.75
+    57: 0.73
+    58: 0.70
+    59: 0.68
+    60: 0.65
+    61: 0.62
+    62: 0.59
+    63: 0.56
+    64: 0.53
+    65: 0.49
+    66: 0.45
+    67: 0.42
+    68: 0.38
+    69: 0.34
+    70: 0.30
+    71: 0.25
+    72: 0.21
+    73: 0.16
+    74: 0.12
+    75: 0.07
+    76: 0.02
+    77: -0.04
+    78: -0.09
+    79: -0.14
+    80: -0.20
+    81: -0.26
+    82: -0.31
+    83: -0.37
+    84: -0.43
+    85: -0.50
+    86: -0.56
+    87: -0.63
+    88: -0.69
+    89: -0.76
+    90: -0.83
+    91: -0.90
+    92: -0.98
+    93: -1.05
+    94: -1.12
+    95: -1.20
+    96: -1.28
+    97: -1.36
+    98: -1.44
+    99: -1.52
+    100: -1.61
+
+# Article count evidence
+article_count:
+  threshold_score: 800
+  weight: 583.9
+  author_count_threshold: 6
+  author_count_adjustment_gamma: 2.6
+  ln_coefficient: -0.2461
+  constant_coefficient: 1.98
+
+# Feedback scoring
+feedback:
+  keyword_count_baseline: 1319351
+  keyword_log_base: 25
+  keyword_offset: 0.4
+  informed_absence:
+    enabled: true
+    scale: 10.0
+    strength:
+      targetAuthorName: 1.0
+      coAuthorName: 0.9
+      keyword: 0.9
+      journal: 0.7
+      journalSubField: 0.7
+      institution: 0.5
+      cites: 0.5
+      organization: 0.5
+      email: 0.3
+      orcid: 0.3
+
+# Scoring thresholds
+scoring:
+  default_threshold: 70
+  target_author_missing_penalty_percent: 35
