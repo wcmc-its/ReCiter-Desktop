@@ -89,13 +89,13 @@ Behind the scenes, the system generates ReCiter-compatible configuration (instit
 ### 2. Researchers
 
 **Upload zone**:
-- Drag-and-drop area with clear instructions: "Upload your researcher list — a spreadsheet with one row per researcher. At minimum, include a unique ID, first name, and last name. Optional: email, department, doctoral year, ORCID."
+- Drag-and-drop area with clear instructions: "Upload your researcher list — a spreadsheet with one row per researcher. At minimum, include a unique ID, first name, and last name. Optional: email, title, primary institution, department, doctoral year, ORCID."
 - Accepts CSV, Excel (.xlsx, .xls), TSV
 - "Download sample template" link with preview of expected format
 - Note: "Column names are flexible — we recognize many common variations."
 
 **Column mapping confirmation**:
-- Auto-detect columns using alias matching (30+ variations: `emp_id`/`cwid`/`netid` → Person ID, `fname`/`firstname`/`first_name` → First Name, `phd_year`/`doctoral_year` → Doctoral Year, etc.)
+- Auto-detect columns using alias matching (30+ variations: `emp_id`/`cwid`/`netid` → Person ID, `fname`/`firstname`/`first_name` → First Name, `phd_year`/`doctoral_year` → Doctoral Year, `rank`/`academic_title` → Title, `institution`/`primary_institution` → Primary Institution, etc.)
 - Table showing: checkbox | Your Column | → | Maps To | Sample Value
 - "Select All" / "Deselect All" buttons
 - Unmapped columns highlighted in amber with dropdown to assign or skip
@@ -107,17 +107,27 @@ Behind the scenes, the system generates ReCiter-compatible configuration (instit
 
 **Import**: Progress bar → "47 researchers loaded"
 
-### 3. Articles (Optional Pre-Upload)
+### 3. Operating Mode
 
-For users who already have PMIDs, this page lets them upload before running the pipeline:
+The user selects one of two modes, presented on the Dashboard and Articles page:
 
-**Upload PMIDs**: CSV upload with person_id + pmid columns. Same column mapper UI pattern. Fetches article metadata from PubMed and links articles to researchers.
+**Full Retrieval and Scoring** — The system searches PubMed for each researcher by name, discovers candidate articles, then scores them. Use this when the institution wants to discover publications they may not already know about.
 
-This step is optional. If skipped, the pipeline will search PubMed for each researcher automatically.
+**Scoring Only** — The user uploads a CSV of known PMIDs (person_id + pmid). The system fetches article metadata from PubMed for those specific articles, then scores them. No broad search is performed. Use this when the institution already has complete publication lists and just needs scores.
 
-### 4. Processing Pipeline
+In both modes, article metadata (title, authors, journal, etc.) is fetched from PubMed. The difference is whether the system also *discovers* new candidate articles.
 
-Unified view for the full pipeline. If articles were pre-uploaded, the pipeline skips retrieval and starts at Match. Otherwise, it runs all four phases: Retrieve → Match → Analyze → Score.
+### 4. Articles
+
+**Full Retrieval and Scoring mode**: No upload needed — the pipeline handles discovery automatically.
+
+**Scoring Only mode**: CSV upload with person_id + pmid columns. Same column mapper UI pattern as the researcher upload.
+
+### 5. Processing Pipeline
+
+Unified view for the full pipeline. Phases depend on the mode:
+- **Full Retrieval and Scoring**: Retrieve → Match → Analyze → Score (4 phases)
+- **Scoring Only**: Fetch Metadata → Match → Analyze → Score (4 phases, but Fetch is faster since it's targeted lookups, not broad search)
 
 **Overall progress bar** at top with running totals (researchers complete, articles found, articles scored).
 
@@ -133,7 +143,7 @@ Unified view for the full pipeline. If articles were pre-uploaded, the pipeline 
 
 **Queued section**: Dimmed rows showing researchers waiting to be processed.
 
-### 5. Results (Article Detail View)
+### 6. Results (Article Detail View)
 
 Accessed by clicking a researcher name from the pipeline or dashboard.
 
@@ -147,7 +157,7 @@ Sortable by any column. Default sort: score descending.
 
 **Export button**: Download CSV for this researcher or all researchers.
 
-### 6. Export
+### 7. Export
 
 Available from the Results view and the Dashboard (after scoring is complete).
 
