@@ -54,6 +54,13 @@ class PersonArticle(Base):
     created_at = Column(TIMESTAMP, server_default=func.now())
 
 
+class RetrievalLog(Base):
+    __tablename__ = "retrieval_log"
+    person_id = Column(String(128), ForeignKey("identity.person_id", ondelete="CASCADE"), primary_key=True)
+    last_retrieval_date = Column(TIMESTAMP, server_default=func.now(), onupdate=func.now())
+    articles_found = Column(Integer, default=0)
+
+
 class PersonArticleScore(Base):
     __tablename__ = "person_article_score"
     person_id = Column(String(128), ForeignKey("identity.person_id", ondelete="CASCADE"), primary_key=True)

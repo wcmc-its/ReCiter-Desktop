@@ -9,14 +9,14 @@ import logging
 import os
 import sys
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import asdict
+from datetime import datetime, timedelta
 from typing import AsyncGenerator
 
 from sqlalchemy.orm import Session
 
 from api.database import SessionLocal
 from api.models import (
-    Identity, Article, PersonArticle, PersonArticleScore, Curation,
+    Identity, Article, PersonArticle, PersonArticleScore, Curation, RetrievalLog,
 )
 
 # Add project root to path so core/ and features/ are importable
@@ -103,8 +103,10 @@ def _process_one_researcher(
         person_articles = db.query(PersonArticle).filter_by(person_id=person_id).all()
         existing_pmids = {pa.pmid for pa in person_articles}
 
-        if mode == "full" and not existing_pmids:
-            # Search PubMed by name
+        if mode == "full":
+            # Check if this is an incremental run (researcher was previously retrieved)
+            retrieval_log = db.query(RetrievalLog).filter_by(person_id=person_id).first()
+
             search_pmids = search_by_name(
                 first_name=core_identity.first_name,
                 last_name=core_identity.last_name,
@@ -142,7 +144,16 @@ def _process_one_researcher(
                         db.add(PersonArticle(
                             person_id=person_id, pmid=art.pmid, source="search"
                         ))
-                db.commit()
+
+            # Update retrieval log
+            if retrieval_log:
+                retrieval_log.articles_found = len(new_pmids)
+            else:
+                db.add(RetrievalLog(
+                    person_id=person_id,
+                    articles_found=len(new_pmids),
+                ))
+            db.commit()
 
         # Reload all articles for this person
         person_articles = db.query(PersonArticle).filter_by(person_id=person_id).all()

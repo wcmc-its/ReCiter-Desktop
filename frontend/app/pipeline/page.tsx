@@ -3,7 +3,6 @@
 
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { PipelineRow, Phase } from "@/components/pipeline-row";
 import { apiFetch } from "@/lib/api";
@@ -25,6 +24,7 @@ export default function PipelinePage() {
   const [totalArticles, setTotalArticles] = useState(0);
   const [totalScored, setTotalScored] = useState(0);
   const [mode, setMode] = useState<"full" | "score_only">("full");
+  const hasExistingScores = researchers.some((r) => r.phase === "complete");
   const [showCompleted, setShowCompleted] = useState(false);
 
   useEffect(() => {
@@ -121,14 +121,14 @@ export default function PipelinePage() {
       </p>
 
       {!running && completed === 0 && (
-        <div className="flex items-center gap-4 mb-6">
+        <div className="space-y-4 mb-6">
           <div className="flex gap-2">
             <Button
               variant={mode === "full" ? "default" : "outline"}
               size="sm"
               onClick={() => setMode("full")}
             >
-              Full Retrieval and Scoring
+              {hasExistingScores ? "Update (new publications only)" : "Full Retrieval and Scoring"}
             </Button>
             <Button
               variant={mode === "score_only" ? "default" : "outline"}
@@ -138,6 +138,12 @@ export default function PipelinePage() {
               Scoring Only
             </Button>
           </div>
+          {hasExistingScores && mode === "full" && (
+            <p className="text-xs text-gray-500">
+              Only newly added publications since the last run will be retrieved and scored.
+              Previously scored articles are kept.
+            </p>
+          )}
           <Button onClick={startPipeline} disabled={researchers.length === 0}>
             Run Pipeline ({researchers.length} researchers)
           </Button>
@@ -169,47 +175,9 @@ export default function PipelinePage() {
         </div>
       )}
 
-      {/* Completed section (collapsed) */}
-      {completedResearchers.length > 0 && (
-        <Card className="border-gray-800 mb-4">
-          <CardContent className="p-0">
-            <button
-              className="w-full flex items-center justify-between px-4 py-3 text-sm"
-              onClick={() => setShowCompleted(!showCompleted)}
-            >
-              <div className="flex items-center gap-2">
-                <span className="text-green-500">{"\u2713"}</span>
-                <span className="text-gray-300">
-                  {completedResearchers.length} researchers complete
-                </span>
-              </div>
-              <span className="text-gray-600 text-xs">
-                {showCompleted ? "Hide" : "Show details"}{" "}
-                {showCompleted ? "\u25B4" : "\u25BE"}
-              </span>
-            </button>
-            {showCompleted && (
-              <div className="border-t border-gray-800">
-                {/* Column headers */}
-                <div className="grid grid-cols-[200px_120px_100px_200px_80px] gap-2 px-4 py-2 text-[10px] text-gray-600 uppercase tracking-wider">
-                  <span>Researcher</span>
-                  <span>UID</span>
-                  <span>Articles</span>
-                  <span>Status</span>
-                  <span>Scores</span>
-                </div>
-                {completedResearchers.map((r) => (
-                  <PipelineRow key={r.personId} {...r} />
-                ))}
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Active rows */}
-      {activeResearchers.length > 0 && (
-        <div className="space-y-1 mb-4">
+      {/* Researcher table — single flat list */}
+      {(running || completed > 0 || researchers.length > 0) && (
+        <div className="space-y-1">
           {/* Column headers */}
           <div className="grid grid-cols-[200px_120px_100px_200px_80px] gap-2 px-4 py-2 text-[10px] text-gray-600 uppercase tracking-wider border-b border-gray-800">
             <span>Researcher</span>
@@ -218,22 +186,45 @@ export default function PipelinePage() {
             <span>Status</span>
             <span>Progress</span>
           </div>
+
+          {/* Active researchers first */}
           {activeResearchers.map((r) => (
             <PipelineRow key={r.personId} {...r} />
           ))}
-        </div>
-      )}
 
-      {/* Queued rows */}
-      {queuedResearchers.length > 0 && running && (
-        <div className="space-y-1">
-          {queuedResearchers.slice(0, 5).map((r) => (
-            <PipelineRow key={r.personId} {...r} />
-          ))}
-          {queuedResearchers.length > 5 && (
-            <p className="text-center text-sm text-gray-600 py-2">
-              ... and {queuedResearchers.length - 5} more queued
-            </p>
+          {/* Queued researchers */}
+          {queuedResearchers.length > 0 && running && (
+            <>
+              {queuedResearchers.slice(0, 5).map((r) => (
+                <PipelineRow key={r.personId} {...r} />
+              ))}
+              {queuedResearchers.length > 5 && (
+                <p className="text-center text-sm text-gray-600 py-2">
+                  ... and {queuedResearchers.length - 5} more queued
+                </p>
+              )}
+            </>
+          )}
+
+          {/* Completed researchers — collapsed */}
+          {completedResearchers.length > 0 && (
+            <div className="border-t border-gray-800 mt-2 pt-2">
+              <button
+                className="w-full flex items-center justify-between px-4 py-2 text-sm"
+                onClick={() => setShowCompleted(!showCompleted)}
+              >
+                <span className="text-gray-400">
+                  {"\u2713"} {completedResearchers.length} complete
+                </span>
+                <span className="text-gray-600 text-xs">
+                  {showCompleted ? "Hide" : "Show"} {showCompleted ? "\u25B4" : "\u25BE"}
+                </span>
+              </button>
+              {showCompleted &&
+                completedResearchers.map((r) => (
+                  <PipelineRow key={r.personId} {...r} />
+                ))}
+            </div>
           )}
         </div>
       )}

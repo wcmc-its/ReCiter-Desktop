@@ -106,14 +106,39 @@ export default function SetupPage() {
       </p>
 
       {/* Step indicator */}
-      <div className="flex gap-2 mb-8">
-        {[1, 2, 3].map((s) => (
-          <div
-            key={s}
-            className={`h-1 flex-1 rounded ${
-              s <= step ? "bg-blue-600" : "bg-gray-800"
-            }`}
-          />
+      <div className="flex gap-4 mb-8">
+        {[
+          { n: 1, label: "Enter Domain" },
+          { n: 2, label: "Discover" },
+          { n: 3, label: "Classify" },
+        ].map((s) => (
+          <div key={s.n} className="flex items-center gap-2 flex-1">
+            <div
+              className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-medium ${
+                s.n < step
+                  ? "bg-green-600 text-white"
+                  : s.n === step
+                  ? "bg-blue-600 text-white"
+                  : "bg-gray-800 text-gray-500"
+              }`}
+            >
+              {s.n < step ? "\u2713" : s.n}
+            </div>
+            <span
+              className={`text-xs ${
+                s.n <= step ? "text-gray-300" : "text-gray-600"
+              }`}
+            >
+              {s.label}
+            </span>
+            {s.n < 3 && (
+              <div
+                className={`flex-1 h-0.5 ${
+                  s.n < step ? "bg-green-600" : "bg-gray-800"
+                }`}
+              />
+            )}
+          </div>
         ))}
       </div>
 
