@@ -24,9 +24,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
 from core.identity import Identity as CoreIdentity
 from core.article import Article as CoreArticle, Author
-from core.pubmed import efetch, esearch
-from core.target_author import find_target_author
-from core.feature_generator import generate_features
+from core.pubmed import fetch_articles, search_by_name
+from core.target_author import identify_target_author
+from core.feature_generator import compute_features
 from core.scoring import score_articles
 from core.config import load_config
 
@@ -105,14 +105,14 @@ def _process_one_researcher(
 
         if mode == "full" and not existing_pmids:
             # Search PubMed by name
-            search_pmids = esearch(
+            search_pmids = search_by_name(
                 first_name=core_identity.first_name,
                 last_name=core_identity.last_name,
-                api_key=api_key,
+                api_key=api_key or "",
             )
-            new_pmids = [p for p in search_pmids if p not in existing_pmids]
+            new_pmids = [p for p in search_pmids if str(p) not in existing_pmids]
             if new_pmids:
-                articles = efetch(new_pmids, api_key=api_key)
+                articles = fetch_articles(new_pmids, api_key=api_key or "")
                 for art in articles:
                     existing_art = db.query(Article).filter_by(pmid=art.pmid).first()
                     if not existing_art:
@@ -159,7 +159,7 @@ def _process_one_researcher(
 
         # Phase 2: Target author matching
         for art in core_articles:
-            idx = find_target_author(art, core_identity)
+            idx = identify_target_author(art, core_identity)
             art.target_author_index = idx
             # Update DB
             pa = db.query(PersonArticle).filter_by(
@@ -173,12 +173,10 @@ def _process_one_researcher(
         curations = db.query(Curation).filter_by(person_id=person_id).all()
         has_curations = len(curations) > 0
 
-        feature_rows = generate_features(
+        feature_rows = compute_features(
             identity=core_identity,
             articles=core_articles,
             config=config,
-            curated_articles=core_articles if has_curations else None,
-            curations={c.pmid: c.assertion for c in curations} if has_curations else None,
         )
 
         if not feature_rows:
@@ -189,8 +187,14 @@ def _process_one_researcher(
             }
 
         # Phase 4: Scoring
+        curated_dict = {c.pmid: c.assertion for c in curations} if has_curations else {}
+        scored_df = score_articles(
+            feature_rows,
+            curated=curated_dict,
+            model_dir=os.path.basename(model_dir),
+            identity_first_name=core_identity.first_name,
+        )
         model_type = "feedbackIdentity" if has_curations else "identityOnly"
-        scored_df = score_articles(feature_rows, model_type=model_type, model_dir=model_dir)
 
         # Save scores
         for _, row in scored_df.iterrows():

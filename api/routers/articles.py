@@ -7,7 +7,7 @@ import pandas as pd
 from api.database import get_db
 from api.models import Article, PersonArticle
 from api.services.column_mapper import detect_mappings
-from core.pubmed import efetch
+from core.pubmed import fetch_articles
 
 router = APIRouter(prefix="/api/articles", tags=["articles"])
 
@@ -34,7 +34,7 @@ async def upload_pmids(file: UploadFile = File(...), db: Session = Depends(get_d
     api_key = os.environ.get("PUBMED_API_KEY")
     pmid_list = [str(p) for p in df["pmid"].dropna().unique()]
 
-    articles = efetch(pmid_list, api_key=api_key)
+    articles = fetch_articles([int(p) for p in pmid_list], api_key=api_key or "")
     article_count = 0
 
     for art in articles:
