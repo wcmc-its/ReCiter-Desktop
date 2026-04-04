@@ -9,6 +9,8 @@ import { Progress } from "@/components/ui/progress";
 import { PipelineRow, Phase } from "@/components/pipeline-row";
 import { apiFetch, apiExportUrl } from "@/lib/api";
 import { subscribeSSE } from "@/lib/sse";
+import { PrerequisiteGate } from "@/components/prerequisite-gate";
+import { useWorkflow } from "@/lib/workflow";
 
 interface ResearcherStatus {
   personId: string;
@@ -19,6 +21,7 @@ interface ResearcherStatus {
 }
 
 export default function PipelinePage() {
+  const { researcherCount } = useWorkflow();
   const [researchers, setResearchers] = useState<ResearcherStatus[]>([]);
   const [running, setRunning] = useState(false);
   const [completed, setCompleted] = useState(0);
@@ -194,6 +197,12 @@ export default function PipelinePage() {
   );
 
   return (
+    <PrerequisiteGate
+      met={researcherCount > 0}
+      message="Upload your researchers first so there is something to score."
+      actionLabel="Go to Researchers"
+      actionHref="/researchers"
+    >
     <div className="max-w-4xl">
       <h2 className="text-2xl font-semibold mb-2 text-gray-900">Processing Pipeline</h2>
       <p className="text-gray-500 mb-6">
@@ -545,5 +554,6 @@ export default function PipelinePage() {
         </div>
       )}
     </div>
+    </PrerequisiteGate>
   );
 }

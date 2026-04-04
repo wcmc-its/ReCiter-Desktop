@@ -7,8 +7,11 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { FileUpload } from "@/components/file-upload";
 import { apiUpload } from "@/lib/api";
+import { PrerequisiteGate } from "@/components/prerequisite-gate";
+import { useWorkflow } from "@/lib/workflow";
 
 export default function ArticlesPage() {
+  const { researcherCount } = useWorkflow();
   const router = useRouter();
   const [uploading, setUploading] = useState(false);
   const [result, setResult] = useState<{
@@ -57,6 +60,12 @@ export default function ArticlesPage() {
   }
 
   return (
+    <PrerequisiteGate
+      met={researcherCount > 0}
+      message="Upload your researchers first so the system knows who to link articles to."
+      actionLabel="Go to Researchers"
+      actionHref="/researchers"
+    >
     <div className="max-w-2xl">
       <h2 className="text-2xl font-semibold mb-2 text-gray-900">Articles</h2>
       <p className="text-gray-500 mb-6">
@@ -84,5 +93,6 @@ export default function ArticlesPage() {
         />
       )}
     </div>
+    </PrerequisiteGate>
   );
 }

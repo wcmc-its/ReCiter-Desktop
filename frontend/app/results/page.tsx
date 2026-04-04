@@ -5,6 +5,8 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { apiFetch, apiExportUrl } from "@/lib/api";
+import { PrerequisiteGate } from "@/components/prerequisite-gate";
+import { useWorkflow } from "@/lib/workflow";
 
 interface Researcher {
   person_id: string;
@@ -15,6 +17,7 @@ interface Researcher {
 }
 
 export default function ResultsPage() {
+  const { scoreCount } = useWorkflow();
   const [researchers, setResearchers] = useState<Researcher[]>([]);
 
   useEffect(() => {
@@ -24,6 +27,12 @@ export default function ResultsPage() {
   const scored = researchers.filter((r) => r.score_count > 0);
 
   return (
+    <PrerequisiteGate
+      met={scoreCount > 0}
+      message="No results yet. Run the pipeline first to score articles."
+      actionLabel="Go to Pipeline"
+      actionHref="/pipeline"
+    >
     <div className="max-w-4xl">
       <div className="flex items-center justify-between mb-6">
         <div>
@@ -73,5 +82,6 @@ export default function ResultsPage() {
         )}
       </div>
     </div>
+    </PrerequisiteGate>
   );
 }
