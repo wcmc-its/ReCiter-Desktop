@@ -9,11 +9,12 @@ type StepStatus = "complete" | "next" | "locked" | "none";
 
 export function Sidebar() {
   const pathname = usePathname();
-  const { institution, researcherCount, scoreCount } = useWorkflow();
+  const { institution, researcherCount, scoreCount, assertionCount } = useWorkflow();
 
   const hasInstitution = !!institution;
   const hasResearchers = researcherCount > 0;
   const hasScores = scoreCount > 0;
+  const hasAssertions = assertionCount > 0;
 
   const workflowItems: Array<{
     href: string;
@@ -52,6 +53,11 @@ export function Sidebar() {
       href: "/results",
       label: "Results",
       status: hasScores ? "complete" : "locked",
+    },
+    {
+      href: "/stats",
+      label: "Statistics",
+      status: hasAssertions ? "next" : "locked",
     },
   ];
 

@@ -21,7 +21,7 @@ interface ResearcherStatus {
 }
 
 export default function PipelinePage() {
-  const { researcherCount } = useWorkflow();
+  const { researcherCount, assertionCount, refresh } = useWorkflow();
   const [researchers, setResearchers] = useState<ResearcherStatus[]>([]);
   const [running, setRunning] = useState(false);
   const [completed, setCompleted] = useState(0);
@@ -163,6 +163,7 @@ export default function PipelinePage() {
         } else if (event.type === "finished") {
           setRunning(false);
           setPipelineFinished(true);
+          refresh();   // Updates assertionCount in WorkflowContext
           apiFetch<{
             high_confidence: number;
             review_band: number;
@@ -547,6 +548,13 @@ export default function PipelinePage() {
                 View Results
               </Button>
             </Link>
+            {assertionCount > 0 && (
+              <Link href="/stats">
+                <Button className="bg-[#cf4520] hover:bg-[#a3381a] text-white">
+                  View Statistics
+                </Button>
+              </Link>
+            )}
             <a href={apiExportUrl("/api/scores/export")} download>
               <Button variant="outline">Export All Scores (CSV)</Button>
             </a>
