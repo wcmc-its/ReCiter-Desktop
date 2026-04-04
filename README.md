@@ -4,6 +4,8 @@ Standalone web application for author name disambiguation. Upload a researcher l
 
 Designed for librarians and research administrators at academic institutions.
 
+![Article scores view showing confidence scores per publication](docs/screenshots/article-scores.png)
+
 ## Quick Start
 
 ```bash
@@ -45,7 +47,16 @@ The pre-trained models are from Weill Cornell Medicine's production ReCiter syst
 | 4 | **Pipeline** | Run the scoring pipeline. Choose Full Retrieval and Scoring (discovers new articles) or Scoring Only (scores uploaded PMIDs). Watch per-researcher progress in real time. Subsequent runs only fetch newly added publications. |
 | 5 | **Results** | View scored articles per researcher with color-coded confidence scores. Adjust the threshold slider. Export results as CSV. |
 
-See [docs/screens.md](docs/screens.md) for detailed screen mockups.
+## Screenshots
+
+| | |
+|---|---|
+| ![Dashboard](docs/screenshots/dashboard.png) | ![Institution Setup](docs/screenshots/setup.png) |
+| **Dashboard** — live status, next step prompt | **Institution Setup** — domain entry, PubMed discovery |
+| ![Researchers](docs/screenshots/researchers.png) | ![Pipeline](docs/screenshots/pipeline.png) |
+| **Researchers** — upload CSV/Excel with flexible column mapping | **Pipeline** — run scoring, track per-researcher progress |
+| ![Results](docs/screenshots/results.png) | ![Article Scores](docs/screenshots/article-scores.png) |
+| **Results** — all researchers with article counts | **Article Scores** — histogram, threshold slider, per-article confidence |
 
 ## Operating Modes
 
@@ -54,6 +65,26 @@ See [docs/screens.md](docs/screens.md) for detailed screen mockups.
 **Scoring Only** — Upload a CSV of known PMIDs (person_id + pmid). The system fetches article metadata and scores them. No broad PubMed search. Use this when you already have complete publication lists.
 
 **Incremental Updates** — When re-running the pipeline for previously scored researchers, only newly added publications are retrieved. Previously scored articles and their scores are preserved.
+
+## Validation
+
+The pre-trained models were developed at Weill Cornell Medicine and externally validated at Fred Hutchinson Cancer Center without retraining.
+
+**Fred Hutchinson Cancer Center validation (868 researchers, ~20,000 publications)**
+
+| Metric | Identity-only model | Feedback model |
+|--------|--------------------|----|
+| Features | 42 | 72 |
+| AUC | 0.9776 | 0.9993 |
+| Accuracy at 95% confidence | 99.57% | 99.99% |
+| Articles requiring manual review | 18% | 2.3% |
+
+The feedback model activates automatically when you import accept/reject curation data (as an `assertion` column in your PMID upload). Feedback features account for 84.8% of model importance — importing even partial curation data dramatically improves precision.
+
+Score thresholds:
+- **≥ 95** — Likely match (green). High confidence, minimal manual review required.
+- **30–94** — Review band (yellow). Examine before accepting.
+- **< 30** — Likely not a match (red).
 
 ## Architecture
 
