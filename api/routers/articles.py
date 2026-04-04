@@ -38,28 +38,46 @@ async def upload_pmids(file: UploadFile = File(...), db: Session = Depends(get_d
     article_count = 0
 
     for art in articles:
-        existing = db.query(Article).filter_by(pmid=art.pmid).first()
+        pmid_str = str(art.pmid)
+        existing = db.query(Article).filter_by(pmid=pmid_str).first()
         if not existing:
             db.add(Article(
-                pmid=art.pmid, title=art.title, journal=art.journal,
-                pub_year=art.pub_year, doi=art.doi, abstract_text=art.abstract,
+                pmid=pmid_str,
+                title=art.title,
+                journal=art.journal_title,
+                pub_year=art.pub_year,
+                doi=art.doi,
+                abstract_text=art.abstract,
                 authors=[{
                     "first_name": a.first_name, "last_name": a.last_name,
                     "initials": a.initials, "affiliation": a.affiliation,
-                    "orcid": a.orcid,
+                    "orcid": getattr(a, "orcid", ""),
                 } for a in art.authors],
+                mesh_headings=[{"descriptor_name": m.descriptor_name, "major_topic": m.major_topic} for m in art.mesh_headings] if art.mesh_headings else [],
+                keywords=art.keywords or [],
+                grants=art.grants or [],
+                publication_types=art.publication_types or [],
             ))
             article_count += 1
 
+    # Commit articles first so FK references work
+    db.commit()
+
+    # Build set of PMIDs that actually exist in the DB
+    fetched_pmids = {str(a.pmid) for a in db.query(Article.pmid).all()}
+
     link_count = 0
+    skipped = 0
     for _, row in df.iterrows():
         pid = str(row["person_id"]).strip()
         pmid = str(row["pmid"]).strip()
-        if pid and pmid:
+        if pid and pmid and pmid in fetched_pmids:
             existing = db.query(PersonArticle).filter_by(person_id=pid, pmid=pmid).first()
             if not existing:
                 db.add(PersonArticle(person_id=pid, pmid=pmid, source="upload"))
                 link_count += 1
+        else:
+            skipped += 1
 
     db.commit()
     return {"articles_fetched": article_count, "links_created": link_count, "total_pmids": len(pmid_list)}

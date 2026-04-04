@@ -23,7 +23,7 @@ from api.models import (
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
 from core.identity import Identity as CoreIdentity
-from core.article import Article as CoreArticle, Author
+from core.article import Article as CoreArticle, Author, MeshHeading
 from core.pubmed import fetch_articles, search_by_name
 from core.target_author import identify_target_author
 from core.feature_generator import compute_features
@@ -66,14 +66,20 @@ def _db_article_to_core(db_article: Article) -> CoreArticle:
                 orcid=a.get("orcid", ""),
             ))
     return CoreArticle(
-        pmid=db_article.pmid,
+        pmid=int(db_article.pmid) if db_article.pmid else 0,
         title=db_article.title or "",
-        journal=db_article.journal or "",
+        journal_title=db_article.journal or "",
         pub_year=db_article.pub_year or 0,
         authors=authors,
         doi=db_article.doi or "",
         abstract=db_article.abstract_text or "",
-        mesh_headings=db_article.mesh_headings or [],
+        mesh_headings=[
+            MeshHeading(
+                descriptor_name=m.get("descriptor_name", "") if isinstance(m, dict) else "",
+                major_topic=m.get("major_topic", False) if isinstance(m, dict) else False,
+            )
+            for m in (db_article.mesh_headings or [])
+        ],
         keywords=db_article.keywords or [],
         grants=db_article.grants or [],
         publication_types=db_article.publication_types or [],
@@ -116,12 +122,13 @@ def _process_one_researcher(
             if new_pmids:
                 articles = fetch_articles(new_pmids, api_key=api_key or "")
                 for art in articles:
-                    existing_art = db.query(Article).filter_by(pmid=art.pmid).first()
+                    existing_art = db.query(Article).filter_by(pmid=str(art.pmid)).first()
                     if not existing_art:
+                        pmid_str = str(art.pmid)
                         db.add(Article(
-                            pmid=art.pmid,
+                            pmid=pmid_str,
                             title=art.title,
-                            journal=art.journal,
+                            journal=art.journal_title,
                             pub_year=art.pub_year,
                             doi=art.doi,
                             abstract_text=art.abstract,
@@ -130,19 +137,19 @@ def _process_one_researcher(
                                 "last_name": a.last_name,
                                 "initials": a.initials,
                                 "affiliation": a.affiliation,
-                                "orcid": a.orcid,
+                                "orcid": getattr(a, "orcid", ""),
                             } for a in art.authors],
-                            mesh_headings=art.mesh_headings if hasattr(art, 'mesh_headings') else [],
-                            keywords=art.keywords if hasattr(art, 'keywords') else [],
-                            grants=art.grants if hasattr(art, 'grants') else [],
-                            publication_types=art.publication_types if hasattr(art, 'publication_types') else [],
+                            mesh_headings=[{"descriptor_name": m.descriptor_name, "major_topic": m.major_topic} for m in art.mesh_headings] if art.mesh_headings else [],
+                            keywords=art.keywords or [],
+                            grants=art.grants or [],
+                            publication_types=art.publication_types or [],
                         ))
                     existing_pa = db.query(PersonArticle).filter_by(
-                        person_id=person_id, pmid=art.pmid
+                        person_id=person_id, pmid=str(art.pmid)
                     ).first()
                     if not existing_pa:
                         db.add(PersonArticle(
-                            person_id=person_id, pmid=art.pmid, source="search"
+                            person_id=person_id, pmid=str(art.pmid), source="search"
                         ))
 
             # Update retrieval log

@@ -1,5 +1,7 @@
 import io
-import json
+import os
+import tempfile
+import uuid
 from fastapi import APIRouter, Depends, File, UploadFile, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -11,6 +13,9 @@ from api.models import Identity, PersonArticle, PersonArticleScore, Curation
 from api.services.column_mapper import detect_mappings
 
 router = APIRouter(prefix="/api/researchers", tags=["researchers"])
+
+UPLOAD_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "_uploads")
+os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 
 class ColumnMapping(BaseModel):
@@ -24,14 +29,13 @@ class ImportRequest(BaseModel):
     import_gold_standard: bool = False
 
 
-_uploaded_files: dict[str, bytes] = {}
-
-
 @router.post("/upload")
 async def upload_file(file: UploadFile = File(...)):
     content = await file.read()
-    file_id = f"upload_{id(content)}"
-    _uploaded_files[file_id] = content
+    file_id = f"upload_{uuid.uuid4().hex[:12]}"
+    filepath = os.path.join(UPLOAD_DIR, file_id)
+    with open(filepath, "wb") as f:
+        f.write(content)
 
     filename = file.filename or "upload.csv"
     if filename.endswith((".xlsx", ".xls")):
@@ -84,19 +88,25 @@ async def upload_file(file: UploadFile = File(...)):
 
 @router.post("/import")
 def import_researchers(req: ImportRequest, db: Session = Depends(get_db)):
-    content = _uploaded_files.get(req.file_id)
-    if not content:
+    filepath = os.path.join(UPLOAD_DIR, req.file_id)
+    if not os.path.exists(filepath):
         raise HTTPException(status_code=404, detail="Upload not found. Please re-upload the file.")
+    with open(filepath, "rb") as f:
+        content = f.read()
 
     rename_map = {m.original: m.canonical for m in req.mappings if m.canonical}
 
+    # Try CSV first (most common), then Excel
     try:
-        df = pd.read_excel(io.BytesIO(content))
+        df = pd.read_csv(io.BytesIO(content))
+        if len(df.columns) <= 1:
+            # Might be TSV
+            df = pd.read_csv(io.BytesIO(content), sep="\t")
     except Exception:
         try:
-            df = pd.read_csv(io.BytesIO(content), sep="\t")
+            df = pd.read_excel(io.BytesIO(content))
         except Exception:
-            df = pd.read_csv(io.BytesIO(content))
+            raise HTTPException(status_code=400, detail="Could not parse file. Supported formats: CSV, TSV, Excel.")
 
     df = df.rename(columns=rename_map)
     df = df.fillna("")
@@ -148,7 +158,7 @@ def import_researchers(req: ImportRequest, db: Session = Depends(get_db)):
                     curation_count += 1
 
     db.commit()
-    del _uploaded_files[req.file_id]
+    os.remove(filepath)
 
     return {"identity_count": identity_count, "curation_count": curation_count}
 
