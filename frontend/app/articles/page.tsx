@@ -34,17 +34,20 @@ export default function ArticlesPage() {
   if (result) {
     return (
       <div className="max-w-2xl">
-        <h2 className="text-2xl font-semibold mb-6">Articles</h2>
-        <Card className="border-green-800 bg-green-950/20">
+        <h2 className="text-2xl font-semibold mb-6 text-gray-900">Articles</h2>
+        <Card className="border-green-300 bg-green-50 shadow-sm">
           <CardContent className="p-6 text-center">
-            <p className="text-green-400 text-lg font-medium mb-2">
+            <p className="text-green-700 text-lg font-medium mb-2">
               {result.total_pmids} PMIDs processed
             </p>
-            <p className="text-green-500/70 text-sm">
+            <p className="text-green-600 text-sm">
               {result.articles_fetched} new articles fetched from PubMed &bull;{" "}
               {result.links_created} researcher-article links created
             </p>
-            <Button className="mt-4" onClick={() => router.push("/pipeline")}>
+            <Button
+              className="mt-4 bg-[#cf4520] hover:bg-[#a3381a] text-white"
+              onClick={() => router.push("/pipeline")}
+            >
               Continue to Pipeline
             </Button>
           </CardContent>
@@ -55,20 +58,20 @@ export default function ArticlesPage() {
 
   return (
     <div className="max-w-2xl">
-      <h2 className="text-2xl font-semibold mb-2">Articles</h2>
-      <p className="text-gray-400 mb-6">
+      <h2 className="text-2xl font-semibold mb-2 text-gray-900">Articles</h2>
+      <p className="text-gray-500 mb-6">
         Upload a list of known PMIDs to score. Use this when you already have
         publication lists and just need scores (Scoring Only mode).
       </p>
-      <p className="text-gray-500 text-sm mb-6">
+      <p className="text-gray-400 text-sm mb-6">
         If you want to discover new articles from PubMed instead, skip this page
         and run the pipeline in Full Retrieval and Scoring mode.
       </p>
 
       {uploading ? (
-        <Card className="border-gray-800">
+        <Card className="border-gray-200 shadow-sm">
           <CardContent className="p-8 text-center">
-            <p className="text-gray-400">
+            <p className="text-gray-500">
               Uploading PMIDs and fetching metadata from PubMed...
             </p>
           </CardContent>

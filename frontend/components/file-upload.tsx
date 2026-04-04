@@ -31,20 +31,21 @@ export function FileUpload({ onFileSelected, description, accept }: FileUploadPr
       }}
       onDragLeave={() => setDragging(false)}
       onDrop={handleDrop}
-      className={`border-2 border-dashed rounded-xl p-12 text-center transition-colors ${
-        dragging ? "border-blue-500 bg-blue-950/20" : "border-gray-700"
+      className={`border-2 border-dashed rounded-xl p-12 text-center transition-colors bg-white ${
+        dragging ? "border-[#cf4520] bg-[#cf4520]/5" : "border-gray-300"
       }`}
     >
-      <p className="text-lg text-gray-300 mb-2 font-medium">
+      <p className="text-lg text-gray-800 mb-2 font-medium">
         Upload your researcher list
       </p>
       <p className="text-sm text-gray-500 mb-1 max-w-md mx-auto leading-relaxed">
         {description}
       </p>
-      <p className="text-xs text-gray-600 mb-5">CSV, Excel (.xlsx, .xls), or TSV</p>
+      <p className="text-xs text-gray-400 mb-5">CSV, Excel (.xlsx, .xls), or TSV</p>
       <div className="flex items-center justify-center gap-3">
         <Button
           variant="default"
+          className="bg-[#cf4520] hover:bg-[#a3381a] text-white"
           onClick={() => {
             const input = document.createElement("input");
             input.type = "file";
@@ -58,12 +59,12 @@ export function FileUpload({ onFileSelected, description, accept }: FileUploadPr
         >
           Browse files
         </Button>
-        <span className="text-gray-600 text-sm">or</span>
-        <a href="#" className="text-sm text-blue-500 border-b border-dashed border-blue-500/30">
+        <span className="text-gray-400 text-sm">or</span>
+        <a href="#" className="text-sm text-[#cf4520] border-b border-dashed border-[#cf4520]/30">
           Download sample template
         </a>
       </div>
-      <p className="text-xs text-gray-600 mt-4">
+      <p className="text-xs text-gray-400 mt-4">
         Column names are flexible — we recognize many common variations.
       </p>
     </div>

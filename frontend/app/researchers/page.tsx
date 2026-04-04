@@ -75,18 +75,21 @@ export default function ResearchersPage() {
   if (importResult) {
     return (
       <div className="max-w-2xl">
-        <h2 className="text-2xl font-semibold mb-6">Researchers</h2>
-        <Card className="border-green-800 bg-green-950/20">
+        <h2 className="text-2xl font-semibold mb-6 text-gray-900">Researchers</h2>
+        <Card className="border-green-300 bg-green-50 shadow-sm">
           <CardContent className="p-6 text-center">
-            <p className="text-green-400 text-lg font-medium mb-2">
+            <p className="text-green-700 text-lg font-medium mb-2">
               {importResult.identity_count} researchers loaded
             </p>
             {importResult.curation_count > 0 && (
-              <p className="text-green-500/70 text-sm">
+              <p className="text-green-600 text-sm">
                 {importResult.curation_count} curation records imported
               </p>
             )}
-            <Button className="mt-4" onClick={() => router.push("/pipeline")}>
+            <Button
+              className="mt-4 bg-[#cf4520] hover:bg-[#a3381a] text-white"
+              onClick={() => router.push("/pipeline")}
+            >
               Continue to Pipeline
             </Button>
           </CardContent>
@@ -97,8 +100,8 @@ export default function ResearchersPage() {
 
   return (
     <div className="max-w-3xl">
-      <h2 className="text-2xl font-semibold mb-2">Researchers</h2>
-      <p className="text-gray-400 mb-6">
+      <h2 className="text-2xl font-semibold mb-2 text-gray-900">Researchers</h2>
+      <p className="text-gray-500 mb-6">
         Upload your researcher list to get started.
       </p>
 
@@ -110,7 +113,7 @@ export default function ResearchersPage() {
       ) : (
         <div className="space-y-6">
           <div className="flex items-center justify-between">
-            <p className="text-sm text-gray-400">
+            <p className="text-sm text-gray-500">
               {uploadResult.filename} — {uploadResult.row_count} rows
             </p>
             <Button
@@ -146,16 +149,16 @@ export default function ResearchersPage() {
           />
 
           {uploadResult.has_gold_standard && (
-            <div className="bg-green-950/30 border border-green-800 rounded-lg p-4 flex items-center gap-3">
+            <div className="bg-green-50 border border-green-300 rounded-lg p-4 flex items-center gap-3">
               <input
                 type="checkbox"
                 checked={importGoldStandard}
                 onChange={() => setImportGoldStandard(!importGoldStandard)}
-                className="rounded border-green-600"
+                className="rounded border-green-400"
               />
               <div>
-                <p className="text-sm text-green-400">Curation data detected</p>
-                <p className="text-xs text-green-500/70">
+                <p className="text-sm text-green-700">Curation data detected</p>
+                <p className="text-xs text-green-600">
                   We found {uploadResult.gold_standard_count} accept/reject
                   records. Import this data to enable the more accurate scoring
                   model.
@@ -174,7 +177,11 @@ export default function ResearchersPage() {
             >
               Cancel
             </Button>
-            <Button onClick={handleImport} disabled={importing}>
+            <Button
+              onClick={handleImport}
+              disabled={importing}
+              className="bg-[#cf4520] hover:bg-[#a3381a] text-white"
+            >
               {importing
                 ? "Importing..."
                 : `Import ${uploadResult.row_count} Researchers`}

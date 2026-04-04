@@ -34,8 +34,8 @@ export function ColumnMapper({
   return (
     <div>
       <div className="flex items-center justify-between mb-4">
-        <p className="text-sm text-gray-400">
-          We detected <strong className="text-gray-200">{mappings.length} columns</strong> in
+        <p className="text-sm text-gray-600">
+          We detected <strong className="text-gray-900">{mappings.length} columns</strong> in
           your file. Please confirm the mappings below.
         </p>
         <div className="flex gap-2">
@@ -48,9 +48,9 @@ export function ColumnMapper({
         </div>
       </div>
 
-      <div className="border border-gray-800 rounded-lg overflow-hidden">
+      <div className="border border-gray-200 rounded-lg overflow-hidden shadow-sm">
         {/* Header */}
-        <div className="grid grid-cols-[40px_180px_30px_200px_140px] gap-2 items-center px-4 py-2 bg-gray-900 text-xs text-gray-500 uppercase tracking-wider">
+        <div className="grid grid-cols-[40px_180px_30px_200px_140px] gap-2 items-center px-4 py-2 bg-gray-50 text-xs text-gray-500 uppercase tracking-wider">
           <span />
           <span>Your Column</span>
           <span />
@@ -62,8 +62,8 @@ export function ColumnMapper({
         {mappings.map((m, i) => (
           <div
             key={i}
-            className={`grid grid-cols-[40px_180px_30px_200px_140px] gap-2 items-center px-4 py-3 border-t border-gray-800 ${
-              !m.canonical ? "bg-amber-950/10" : ""
+            className={`grid grid-cols-[40px_180px_30px_200px_140px] gap-2 items-center px-4 py-3 border-t border-gray-200 bg-white ${
+              !m.canonical ? "bg-amber-50" : ""
             }`}
           >
             <div className="flex justify-center">
@@ -71,19 +71,19 @@ export function ColumnMapper({
                 type="checkbox"
                 checked={m.selected && !!m.canonical}
                 onChange={() => onToggle(i)}
-                className="rounded border-gray-600"
+                className="rounded border-gray-300"
                 disabled={!m.canonical}
               />
             </div>
-            <code className="text-sm text-gray-300 bg-gray-800 px-2 py-0.5 rounded">
+            <code className="text-sm text-gray-700 bg-gray-100 px-2 py-0.5 rounded">
               {m.original}
             </code>
-            <span className="text-gray-600 text-center">{"\u2192"}</span>
+            <span className="text-gray-400 text-center">{"\u2192"}</span>
             {m.canonical ? (
-              <span className="text-sm text-green-400">{m.canonical}</span>
+              <span className="text-sm text-green-700">{m.canonical}</span>
             ) : (
               <select
-                className="bg-gray-800 text-amber-400 border border-amber-800/30 rounded px-2 py-1 text-sm"
+                className="bg-white text-amber-700 border border-amber-300 rounded px-2 py-1 text-sm"
                 value=""
                 onChange={(e) =>
                   onMappingChange(i, e.target.value || null)
@@ -98,7 +98,7 @@ export function ColumnMapper({
                 <option value="__skip">Skip this column</option>
               </select>
             )}
-            <span className="text-xs text-gray-600 font-mono truncate">
+            <span className="text-xs text-gray-400 font-mono truncate">
               {m.sample}
             </span>
           </div>

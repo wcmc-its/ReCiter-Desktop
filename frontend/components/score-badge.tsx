@@ -3,14 +3,14 @@ export function ScoreBadge({ score }: { score: number }) {
   let bg: string;
   let text: string;
   if (score >= 70) {
-    bg = "bg-green-900/60";
-    text = "text-green-400";
+    bg = "bg-green-50";
+    text = "text-green-700";
   } else if (score >= 30) {
-    bg = "bg-amber-900/40";
-    text = "text-amber-400";
+    bg = "bg-amber-50";
+    text = "text-amber-700";
   } else {
-    bg = "bg-red-900/40";
-    text = "text-red-400";
+    bg = "bg-red-50";
+    text = "text-red-600";
   }
   return (
     <span

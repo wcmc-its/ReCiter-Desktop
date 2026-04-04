@@ -70,8 +70,8 @@ export default function Dashboard() {
 
   return (
     <div className="max-w-4xl">
-      <h2 className="text-2xl font-semibold mb-2">ReCiter Desktop</h2>
-      <p className="text-gray-400 mb-8">
+      <h2 className="text-2xl font-semibold mb-2 text-gray-900">ReCiter Desktop</h2>
+      <p className="text-gray-500 mb-8">
         Score publications against researcher identities using machine learning.
         Upload a researcher list, retrieve articles from PubMed, and get
         confidence scores for each article-researcher match.
@@ -113,13 +113,15 @@ export default function Dashboard() {
       </div>
 
       <Link href={nextHref}>
-        <Button size="lg">{nextLabel}</Button>
+        <Button size="lg" className="bg-[#cf4520] hover:bg-[#a3381a] text-white">
+          {nextLabel}
+        </Button>
       </Link>
 
       {hasInstitution && (
-        <Card className="mt-8 border-gray-800 bg-gray-900/50">
+        <Card className="mt-8 border-gray-200 bg-gray-50 shadow-sm">
           <CardContent className="p-4">
-            <p className="text-sm font-medium text-gray-300 mb-2">
+            <p className="text-sm font-medium text-gray-700 mb-2">
               About Scoring Models
             </p>
             <p className="text-xs text-gray-500 leading-relaxed">

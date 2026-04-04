@@ -15,10 +15,10 @@ export function StatusCard({ stepNumber, label, value, isComplete, isNext }: Sta
   return (
     <Card
       className={cn(
-        "transition-colors",
-        isNext && "border-blue-600 bg-blue-950/20",
-        isComplete && "border-green-800",
-        !isNext && !isComplete && "border-gray-800"
+        "transition-colors border shadow-sm",
+        isNext && "border-[#cf4520] bg-[#cf4520]/5",
+        isComplete && "border-green-300",
+        !isNext && !isComplete && "border-gray-200"
       )}
     >
       <CardContent className="p-4">
@@ -29,8 +29,8 @@ export function StatusCard({ stepNumber, label, value, isComplete, isNext }: Sta
               isComplete
                 ? "bg-green-600 text-white"
                 : isNext
-                ? "bg-blue-600 text-white"
-                : "bg-gray-800 text-gray-500"
+                ? "bg-[#cf4520] text-white"
+                : "bg-gray-200 text-gray-500"
             )}
           >
             {isComplete ? "\u2713" : stepNumber}
@@ -42,7 +42,7 @@ export function StatusCard({ stepNumber, label, value, isComplete, isNext }: Sta
         <p
           className={cn(
             "text-sm font-medium ml-7",
-            isComplete ? "text-green-400" : isNext ? "text-blue-400" : "text-gray-500"
+            isComplete ? "text-green-600" : isNext ? "text-[#cf4520]" : "text-gray-400"
           )}
         >
           {value}

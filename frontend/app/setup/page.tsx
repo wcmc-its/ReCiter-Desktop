@@ -99,8 +99,8 @@ export default function SetupPage() {
 
   return (
     <div className="max-w-2xl">
-      <h2 className="text-2xl font-semibold mb-2">Institution Setup</h2>
-      <p className="text-gray-400 mb-6">
+      <h2 className="text-2xl font-semibold mb-2 text-gray-900">Institution Setup</h2>
+      <p className="text-gray-500 mb-6">
         Configure your institution by entering your email domain. We will discover
         your institutional profile from PubMed automatically.
       </p>
@@ -118,15 +118,15 @@ export default function SetupPage() {
                 s.n < step
                   ? "bg-green-600 text-white"
                   : s.n === step
-                  ? "bg-blue-600 text-white"
-                  : "bg-gray-800 text-gray-500"
+                  ? "bg-[#cf4520] text-white"
+                  : "bg-gray-200 text-gray-500"
               }`}
             >
               {s.n < step ? "\u2713" : s.n}
             </div>
             <span
               className={`text-xs ${
-                s.n <= step ? "text-gray-300" : "text-gray-600"
+                s.n <= step ? "text-gray-700" : "text-gray-400"
               }`}
             >
               {s.label}
@@ -134,7 +134,7 @@ export default function SetupPage() {
             {s.n < 3 && (
               <div
                 className={`flex-1 h-0.5 ${
-                  s.n < step ? "bg-green-600" : "bg-gray-800"
+                  s.n < step ? "bg-green-600" : "bg-gray-200"
                 }`}
               />
             )}
@@ -144,7 +144,7 @@ export default function SetupPage() {
 
       {/* Step 1: Enter domain */}
       {step === 1 && (
-        <Card className="border-gray-800">
+        <Card className="border-gray-200 shadow-sm">
           <CardContent className="p-6 space-y-4">
             <div>
               <Label htmlFor="domain">Institution email domain</Label>
@@ -166,7 +166,11 @@ export default function SetupPage() {
                 className="mt-1"
               />
             </div>
-            <Button onClick={startDiscovery} disabled={!domain.trim()}>
+            <Button
+              onClick={startDiscovery}
+              disabled={!domain.trim()}
+              className="bg-[#cf4520] hover:bg-[#a3381a] text-white"
+            >
               Discover
             </Button>
           </CardContent>
@@ -175,19 +179,19 @@ export default function SetupPage() {
 
       {/* Step 2: Discovery progress */}
       {step === 2 && (
-        <Card className="border-gray-800">
+        <Card className="border-gray-200 shadow-sm">
           <CardContent className="p-6">
             <div className="space-y-2">
               {statusMessages.map((msg, i) => (
                 <div key={i} className="flex items-center gap-2 text-sm">
-                  <span className={i === statusMessages.length - 1 && discovering ? "text-blue-400" : "text-green-500"}>
+                  <span className={i === statusMessages.length - 1 && discovering ? "text-[#cf4520]" : "text-green-600"}>
                     {i === statusMessages.length - 1 && discovering ? "\u25CB" : "\u2713"}
                   </span>
-                  <span className="text-gray-300">{msg}</span>
+                  <span className="text-gray-700">{msg}</span>
                 </div>
               ))}
               {discovering && (
-                <p className="text-gray-500 text-sm mt-4">Analyzing affiliations...</p>
+                <p className="text-gray-400 text-sm mt-4">Analyzing affiliations...</p>
               )}
             </div>
           </CardContent>
@@ -197,19 +201,19 @@ export default function SetupPage() {
       {/* Step 3: Classify institutions */}
       {step === 3 && (
         <div className="space-y-6">
-          <Card className="border-gray-800">
+          <Card className="border-gray-200 shadow-sm">
             <CardContent className="p-6">
-              <h3 className="text-sm font-medium text-gray-300 mb-4">
+              <h3 className="text-sm font-medium text-gray-700 mb-4">
                 Classify discovered institutions
               </h3>
               <div className="space-y-3">
                 {institutions.map((inst, i) => (
                   <div
                     key={i}
-                    className="flex items-center justify-between p-3 rounded bg-gray-900 border border-gray-800"
+                    className="flex items-center justify-between p-3 rounded bg-gray-50 border border-gray-200"
                   >
                     <div>
-                      <p className="text-sm text-gray-200">{inst.name}</p>
+                      <p className="text-sm text-gray-900">{inst.name}</p>
                       <p className="text-xs text-gray-500">
                         {inst.count} mentions
                       </p>
@@ -226,11 +230,11 @@ export default function SetupPage() {
                           className={`px-3 py-1 text-xs rounded ${
                             inst.classification === cls
                               ? cls === "home"
-                                ? "bg-green-900 text-green-300"
+                                ? "bg-green-100 text-green-700 border border-green-300"
                                 : cls === "collaborating"
-                                ? "bg-blue-900 text-blue-300"
-                                : "bg-gray-700 text-gray-400"
-                              : "bg-gray-800 text-gray-500 hover:bg-gray-700"
+                                ? "bg-blue-100 text-blue-700 border border-blue-300"
+                                : "bg-gray-200 text-gray-600 border border-gray-300"
+                              : "bg-white text-gray-500 border border-gray-200 hover:bg-gray-50"
                           }`}
                         >
                           {cls === "home"
@@ -247,9 +251,9 @@ export default function SetupPage() {
             </CardContent>
           </Card>
 
-          <Card className="border-gray-800">
+          <Card className="border-gray-200 shadow-sm">
             <CardContent className="p-6">
-              <h3 className="text-sm font-medium text-gray-300 mb-4">
+              <h3 className="text-sm font-medium text-gray-700 mb-4">
                 Email domains
               </h3>
               <div className="space-y-2">
@@ -266,10 +270,10 @@ export default function SetupPage() {
                         updated[i] = { ...updated[i], selected: !d.selected };
                         setEmailDomains(updated);
                       }}
-                      className="rounded border-gray-600"
+                      className="rounded border-gray-300"
                     />
-                    <span className="text-gray-300">@{d.domain}</span>
-                    <span className="text-gray-600 text-xs">
+                    <span className="text-gray-700">@{d.domain}</span>
+                    <span className="text-gray-400 text-xs">
                       ({d.count} occurrences)
                     </span>
                   </label>
@@ -278,7 +282,11 @@ export default function SetupPage() {
             </CardContent>
           </Card>
 
-          <Button onClick={saveConfig} disabled={saving}>
+          <Button
+            onClick={saveConfig}
+            disabled={saving}
+            className="bg-[#cf4520] hover:bg-[#a3381a] text-white"
+          >
             {saving ? "Saving..." : "Save Configuration"}
           </Button>
         </div>

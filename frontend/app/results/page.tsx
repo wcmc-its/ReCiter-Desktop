@@ -27,8 +27,8 @@ export default function ResultsPage() {
     <div className="max-w-4xl">
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h2 className="text-2xl font-semibold">Results</h2>
-          <p className="text-gray-400 text-sm">
+          <h2 className="text-2xl font-semibold text-gray-900">Results</h2>
+          <p className="text-gray-500 text-sm">
             {scored.length} researchers scored
           </p>
         </div>
@@ -39,8 +39,8 @@ export default function ResultsPage() {
         )}
       </div>
 
-      <div className="border border-gray-800 rounded-lg overflow-hidden">
-        <div className="grid grid-cols-[200px_120px_100px_100px_100px] gap-2 px-4 py-2 bg-gray-900 text-xs text-gray-500 uppercase tracking-wider">
+      <div className="border border-gray-200 rounded-lg overflow-hidden shadow-sm">
+        <div className="grid grid-cols-[200px_120px_100px_100px_100px] gap-2 px-4 py-2 bg-gray-50 text-xs text-gray-500 uppercase tracking-wider">
           <span>Researcher</span>
           <span>UID</span>
           <span>Articles</span>
@@ -51,23 +51,23 @@ export default function ResultsPage() {
           <Link
             key={r.person_id}
             href={`/results/${r.person_id}`}
-            className="grid grid-cols-[200px_120px_100px_100px_100px] gap-2 items-center px-4 py-3 border-t border-gray-800 hover:bg-gray-900/50 transition-colors"
+            className="grid grid-cols-[200px_120px_100px_100px_100px] gap-2 items-center px-4 py-3 border-t border-gray-200 hover:bg-gray-50 transition-colors"
           >
-            <span className="text-sm text-gray-200">
+            <span className="text-sm text-gray-900">
               {r.first_name} {r.last_name}
             </span>
-            <span className="text-xs text-gray-600 font-mono">
+            <span className="text-xs text-gray-400 font-mono">
               {r.person_id}
             </span>
             <span className="text-sm text-gray-500">{r.article_count}</span>
             <span className="text-sm text-gray-500">{r.score_count}</span>
-            <span className="text-xs text-blue-500">
+            <span className="text-xs text-[#cf4520]">
               View articles {"\u2192"}
             </span>
           </Link>
         ))}
         {scored.length === 0 && (
-          <div className="px-4 py-8 text-center text-gray-600">
+          <div className="px-4 py-8 text-center text-gray-400">
             No scored researchers yet. Run the pipeline first.
           </div>
         )}

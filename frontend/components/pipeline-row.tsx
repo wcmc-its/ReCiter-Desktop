@@ -7,17 +7,17 @@ import { Progress } from "@/components/ui/progress";
 export type Phase = "queued" | "retrieving" | "matching" | "analyzing" | "scoring" | "complete" | "error";
 
 const PHASE_COLORS: Record<Phase, string> = {
-  queued: "text-gray-500",
-  retrieving: "text-blue-400",
-  matching: "text-purple-400",
-  analyzing: "text-amber-400",
-  scoring: "text-red-400",
-  complete: "text-green-400",
-  error: "text-red-500",
+  queued: "text-gray-400",
+  retrieving: "text-blue-600",
+  matching: "text-purple-600",
+  analyzing: "text-amber-600",
+  scoring: "text-red-600",
+  complete: "text-green-600",
+  error: "text-red-600",
 };
 
 const PHASE_BORDERS: Record<Phase, string> = {
-  queued: "border-l-gray-700",
+  queued: "border-l-gray-300",
   retrieving: "border-l-blue-500",
   matching: "border-l-purple-500",
   analyzing: "border-l-amber-500",
@@ -57,7 +57,7 @@ export function PipelineRow({
 
   return (
     <div
-      className={`grid grid-cols-[200px_120px_100px_200px_80px] gap-2 items-center px-4 py-2.5 rounded-md border-l-[3px] ${
+      className={`grid grid-cols-[200px_120px_100px_200px_80px] gap-2 items-center px-4 py-2.5 rounded-md border-l-[3px] bg-white ${
         PHASE_BORDERS[phase]
       } ${phase === "queued" ? "opacity-45" : ""}`}
     >
@@ -65,13 +65,13 @@ export function PipelineRow({
         href={phase === "complete" ? `/results/${personId}` : "#"}
         className={`text-sm ${
           phase === "complete"
-            ? "text-green-300 underline decoration-green-800"
-            : "text-gray-200"
+            ? "text-[#cf4520] underline decoration-[#cf4520]/30"
+            : "text-gray-800"
         }`}
       >
         {name}
       </Link>
-      <span className="text-xs text-gray-600 font-mono">{personId}</span>
+      <span className="text-xs text-gray-400 font-mono">{personId}</span>
       <span className="text-sm text-gray-500">
         {articleCount ?? "\u2014"}
       </span>
@@ -82,7 +82,7 @@ export function PipelineRow({
           </span>
         )}
         {phase === "complete" && (
-          <span className="text-green-500 text-sm">{"\u2713"}</span>
+          <span className="text-green-600 text-sm">{"\u2713"}</span>
         )}
         <span className={`text-sm ${PHASE_COLORS[phase]}`}>
           {PHASE_LABELS[phase]}
@@ -93,7 +93,7 @@ export function PipelineRow({
           <Progress value={progress} className="h-1" />
         )}
         {phase === "complete" && scoreRange && (
-          <span className="text-xs text-gray-600">{scoreRange}</span>
+          <span className="text-xs text-gray-400">{scoreRange}</span>
         )}
       </div>
     </div>
