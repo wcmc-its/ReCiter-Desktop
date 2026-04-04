@@ -181,7 +181,7 @@ def _process_one_researcher(
             art.target_author_index = idx
             # Update DB
             pa = db.query(PersonArticle).filter_by(
-                person_id=person_id, pmid=art.pmid
+                person_id=person_id, pmid=str(art.pmid)
             ).first()
             if pa:
                 pa.target_author_index = idx
@@ -190,6 +190,11 @@ def _process_one_researcher(
         # Phase 3: Feature generation
         curations = db.query(Curation).filter_by(person_id=person_id).all()
         has_curations = len(curations) > 0
+        curation_map = {c.pmid: c.assertion for c in curations}
+
+        # Set user_assertion on articles so feedback features work
+        for art in core_articles:
+            art.user_assertion = curation_map.get(str(art.pmid), "")
 
         feature_rows = compute_features(
             identity=core_identity,
