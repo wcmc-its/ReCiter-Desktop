@@ -9,6 +9,7 @@ interface WorkflowState {
   articleCount: number;
   scoreCount: number;
   scoredResearchers: number;
+  assertionCount: number;
   loading: boolean;
   refresh: () => void;
 }
@@ -19,6 +20,7 @@ const WorkflowContext = createContext<WorkflowState>({
   articleCount: 0,
   scoreCount: 0,
   scoredResearchers: 0,
+  assertionCount: 0,
   loading: true,
   refresh: () => {},
 });
@@ -30,6 +32,7 @@ export function WorkflowProvider({ children }: { children: ReactNode }) {
     articleCount: 0,
     scoreCount: 0,
     scoredResearchers: 0,
+    assertionCount: 0,
   });
   const [loading, setLoading] = useState(true);
 
@@ -42,6 +45,7 @@ export function WorkflowProvider({ children }: { children: ReactNode }) {
           total_articles: number;
           total_scores: number;
           scored_researchers: number;
+          assertion_count: number;
         }>("/api/pipeline/status"),
       ]);
       setState({
@@ -50,6 +54,7 @@ export function WorkflowProvider({ children }: { children: ReactNode }) {
         articleCount: status.total_articles,
         scoreCount: status.total_scores,
         scoredResearchers: status.scored_researchers,
+        assertionCount: status.assertion_count,
       });
     } catch {
       // API not available
