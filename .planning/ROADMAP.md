@@ -50,8 +50,11 @@ Plans:
   1. Sidebar shows a "Statistics" item that is locked with a prerequisite message when no (score, assertion) joined pairs exist in the database, and unlocked otherwise
   2. Pipeline completion page displays a "View Statistics" CTA link when assertions exist; the link is absent when no assertions exist
   3. Navigating to `/stats` when the gate is not met shows the prerequisite gate UI; navigating when it is met renders the stats page
-**Plans**: TBD
-**UI hint**: yes
+**Plans:** 2 plans
+
+Plans:
+- [ ] 02-01-PLAN.md — Backend assertion_count field + WorkflowContext extension
+- [ ] 02-02-PLAN.md — Sidebar entry, pipeline CTA, /stats route with gate
 
 ### Phase 3: Stats Page Frontend
 **Goal**: Users can view four charts, benchmark reference lines, and a strongest-disagreements table on a single stats page that accurately represents their pipeline run quality
@@ -71,5 +74,5 @@ Plans:
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
 | 1. Backend Stats Endpoint | v1.1 | 3/3 | Complete   | 2026-04-04 |
-| 2. Workflow Wiring and Navigation | v1.1 | 0/TBD | Not started | - |
+| 2. Workflow Wiring and Navigation | v1.1 | 0/2 | In progress | - |
 | 3. Stats Page Frontend | v1.1 | 0/TBD | Not started | - |
