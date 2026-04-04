@@ -1,7 +1,8 @@
 ---
 phase: 2
 slug: workflow-wiring-and-navigation
-status: draft
+status: approved
+reviewed_at: 2026-04-04
 shadcn_initialized: true
 preset: base-nova / neutral
 created: 2026-04-04
@@ -61,7 +62,7 @@ Source: `frontend/components/sidebar.tsx`, `frontend/components/prerequisite-gat
 
 Notes:
 - 10px uppercase labels are used for nav section titles ("Overview", "Workflow", "Help") — use `text-[10px] font-semibold text-gray-400 uppercase tracking-wider`
-- Sidebar nav item text: `text-sm` (14px), not semibold when inactive; `font-medium` when active
+- Sidebar nav item text: `text-sm` (14px), weight 400 when inactive; `font-semibold` (600) when active
 - Gate card message: `text-sm text-amber-800`
 - Placeholder body text on /stats page: `text-sm text-gray-500`
 
@@ -138,7 +139,7 @@ text-gray-300 hover:text-white hover:bg-[#2c3e50]/60
 
 **Exact class string when active:**
 ```
-bg-[#2c3e50] text-white font-medium
+bg-[#2c3e50] text-white font-semibold
 ```
 
 Note: Gate enforcement happens at /stats via PrerequisiteGate, NOT via `pointer-events-none` on the sidebar link. (Source: CONTEXT.md D-04)
@@ -221,7 +222,7 @@ Source: `frontend/components.json`
 |---------|-------|-----------------|
 | Sidebar "Statistics" — locked | `assertionCount === 0` | `text-gray-500`, `—` icon in `text-gray-600`, hover: faint `#2c3e50` tint |
 | Sidebar "Statistics" — unlocked | `assertionCount > 0` | `text-gray-300`, `●` dot in `text-[#cf4520]`, hover: white text + `#2c3e50` bg |
-| Sidebar "Statistics" — active | `pathname === "/stats"` | `bg-[#2c3e50] text-white font-medium` |
+| Sidebar "Statistics" — active | `pathname === "/stats"` | `bg-[#2c3e50] text-white font-semibold` |
 | /stats gate card | `assertionCount === 0` | amber card, amber button — existing PrerequisiteGate output |
 | /stats page body | `assertionCount > 0` | Gray card with placeholder text |
 | "View Statistics" CTA | `assertionCount > 0` | Cornell red button, same weight as "View Results" |
