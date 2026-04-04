@@ -148,6 +148,27 @@ export default function ResearchersPage() {
             }
           />
 
+          {/* Preview of mapped data */}
+          {mappings.some((m) => m.selected && m.canonical) && uploadResult.preview.length > 0 && (
+            <div>
+              <p className="text-xs text-gray-500 mb-2">Preview (first {uploadResult.preview.length} rows as they will be imported)</p>
+              <div className="border border-gray-200 rounded-lg overflow-hidden text-xs shadow-sm">
+                <div className="flex bg-gray-50 px-3 py-2 gap-4 text-gray-500 uppercase tracking-wider font-medium" style={{fontSize: '10px'}}>
+                  {mappings.filter((m) => m.selected && m.canonical).map((m) => (
+                    <span key={m.canonical} className="flex-1 min-w-0 truncate">{m.canonical!.replace(/_/g, ' ')}</span>
+                  ))}
+                </div>
+                {uploadResult.preview.map((row, ri) => (
+                  <div key={ri} className="flex px-3 py-1.5 gap-4 border-t border-gray-100 text-gray-700">
+                    {mappings.filter((m) => m.selected && m.canonical).map((m) => (
+                      <span key={m.canonical} className="flex-1 min-w-0 truncate">{String(row[m.original] ?? '')}</span>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           {uploadResult.has_gold_standard && (
             <div className="bg-green-50 border border-green-300 rounded-lg p-4 flex items-center gap-3">
               <input

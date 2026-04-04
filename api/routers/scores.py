@@ -73,6 +73,7 @@ def get_scores(person_id: str, db: Session = Depends(get_db)):
             "journal": s.Article.journal,
             "pub_year": s.Article.pub_year,
             "doi": s.Article.doi,
+            "features": s.PersonArticleScore.features or {},
         }
         for s in scores
     ]

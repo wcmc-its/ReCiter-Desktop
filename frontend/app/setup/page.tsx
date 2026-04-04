@@ -33,6 +33,7 @@ export default function SetupPage() {
   const [emailDomains, setEmailDomains] = useState<DiscoveredDomain[]>([]);
   const [discovering, setDiscovering] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [hideMinor, setHideMinor] = useState(true);
 
   function startDiscovery() {
     if (!domain.trim()) return;
@@ -206,10 +207,19 @@ export default function SetupPage() {
               <h3 className="text-sm font-medium text-gray-700 mb-4">
                 Classify discovered institutions
               </h3>
+              <div className="flex items-center gap-2 mb-3">
+                <input
+                  type="checkbox"
+                  checked={hideMinor}
+                  onChange={() => setHideMinor(!hideMinor)}
+                  className="rounded border-gray-300"
+                />
+                <span className="text-xs text-gray-500">Hide institutions with fewer than 5 mentions</span>
+              </div>
               <div className="space-y-3">
-                {institutions.map((inst, i) => (
+                {institutions.filter((inst) => !hideMinor || inst.count >= 5).map((inst) => (
                   <div
-                    key={i}
+                    key={inst.name}
                     className="flex items-center justify-between p-3 rounded bg-gray-50 border border-gray-200"
                   >
                     <div>
@@ -223,8 +233,9 @@ export default function SetupPage() {
                         <button
                           key={cls}
                           onClick={() => {
-                            const updated = [...institutions];
-                            updated[i] = { ...updated[i], classification: cls };
+                            const updated = institutions.map((item) =>
+                              item.name === inst.name ? { ...item, classification: cls } : item
+                            );
                             setInstitutions(updated);
                           }}
                           className={`px-3 py-1 text-xs rounded ${
