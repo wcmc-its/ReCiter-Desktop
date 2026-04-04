@@ -8,12 +8,12 @@
 
 ### Stats API
 
-- [ ] **STATS-01**: Backend computes ROC curve points, AUC scalar value, and bootstrap 95% CI for AUC
-- [ ] **STATS-02**: Backend computes calibration bins (10 uniform bins, n-per-bin counts included), gated at n≥50 joined (score, assertion) pairs
-- [ ] **STATS-03**: Backend computes PR curve points, AUC-PR scalar, and prevalence-anchored no-skill baseline value
-- [ ] **STATS-04**: Backend returns score distribution binned by assertion (ACCEPTED/REJECTED counts per 10-point bucket, 0–100)
-- [ ] **STATS-05**: Backend returns top-10 strongest disagreements ranked by |score − assertion_value| (ACCEPTED→100, REJECTED→0)
-- [ ] **STATS-06**: API returns viability flags (below-n-threshold warning when n<50, single-class-only error when all assertions are the same label)
+- [x] **STATS-01**: Backend computes ROC curve points, AUC scalar value, and bootstrap 95% CI for AUC
+- [x] **STATS-02**: Backend computes calibration bins (10 uniform bins, n-per-bin counts included), gated at n≥50 joined (score, assertion) pairs
+- [x] **STATS-03**: Backend computes PR curve points, AUC-PR scalar, and prevalence-anchored no-skill baseline value
+- [x] **STATS-04**: Backend returns score distribution binned by assertion (ACCEPTED/REJECTED counts per 10-point bucket, 0–100)
+- [x] **STATS-05**: Backend returns top-10 strongest disagreements ranked by |score − assertion_value| (ACCEPTED→100, REJECTED→0)
+- [x] **STATS-06**: API returns viability flags (below-n-threshold warning when n<50, single-class-only error when all assertions are the same label)
 
 ### Charts
 
@@ -63,12 +63,12 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| STATS-01 | Phase 1 | Pending |
-| STATS-02 | Phase 1 | Pending |
-| STATS-03 | Phase 1 | Pending |
-| STATS-04 | Phase 1 | Pending |
-| STATS-05 | Phase 1 | Pending |
-| STATS-06 | Phase 1 | Pending |
+| STATS-01 | Phase 1 | Complete |
+| STATS-02 | Phase 1 | Complete |
+| STATS-03 | Phase 1 | Complete |
+| STATS-04 | Phase 1 | Complete |
+| STATS-05 | Phase 1 | Complete |
+| STATS-06 | Phase 1 | Complete |
 | NAV-01 | Phase 2 | Pending |
 | NAV-02 | Phase 2 | Pending |
 | NAV-03 | Phase 2 | Pending |

@@ -38,7 +38,7 @@ What shipped: Docker Compose app (Next.js + FastAPI + MariaDB), institution setu
 **Plans:** 3 plans
 
 Plans:
-- [ ] 01-01-PLAN.md — Wave 0: Test suite scaffolding (15 unit tests for STATS-01 through STATS-06)
+- [x] 01-01-PLAN.md — Wave 0: Test suite scaffolding (15 unit tests for STATS-01 through STATS-06)
 - [ ] 01-02-PLAN.md — Stats service implementation (all computation functions + data prep)
 - [ ] 01-03-PLAN.md — Router + wiring (HTTP layer + main.py registration)
 
