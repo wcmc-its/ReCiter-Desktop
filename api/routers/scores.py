@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from api.database import get_db
 from api.models import Identity, Article, PersonArticle, PersonArticleScore
+from api.services.orcid_inference import infer_orcids
 
 router = APIRouter(prefix="/api/scores", tags=["scores"])
 
@@ -51,6 +52,47 @@ def export_scores(
         iter([output.getvalue()]),
         media_type="text/csv",
         headers={"Content-Disposition": "attachment; filename=reciter_scores.csv"},
+    )
+
+
+@router.get("/orcid-report")
+def orcid_report(db: Session = Depends(get_db)):
+    results = infer_orcids(db)
+    tier_counts = {}
+    for r in results:
+        t = r["confidence_tier"]
+        tier_counts[t] = tier_counts.get(t, 0) + 1
+    return {
+        "total_with_orcid": len(results),
+        "tier_counts": tier_counts,
+        "inferences": results,
+    }
+
+
+@router.get("/orcid-report/export")
+def export_orcid_report(db: Session = Depends(get_db)):
+    results = infer_orcids(db)
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow([
+        "person_id", "first_name", "last_name", "inferred_orcid",
+        "confidence_tier", "confidence_score",
+        "accepted_articles", "rejected_articles", "total_articles",
+        "identity_orcid", "orcid_matches_identity", "orcid_link",
+    ])
+    for r in results:
+        writer.writerow([
+            r["person_id"], r["first_name"], r["last_name"], r["orcid"],
+            r["confidence_tier"], r["confidence_score"],
+            r["accepted_articles"], r["rejected_articles"], r["total_articles"],
+            r["identity_orcid"], r["orcid_matches_identity"],
+            f"https://orcid.org/{r['orcid']}",
+        ])
+    output.seek(0)
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=orcid_inference.csv"},
     )
 
 

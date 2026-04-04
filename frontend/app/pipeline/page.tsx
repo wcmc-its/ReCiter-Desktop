@@ -40,6 +40,22 @@ export default function PipelinePage() {
     review_band: number;
     unlikely: number;
   } | null>(null);
+  const [orcidReport, setOrcidReport] = useState<{
+    total_with_orcid: number;
+    tier_counts: Record<string, number>;
+    inferences: Array<{
+      person_id: string;
+      first_name: string;
+      last_name: string;
+      orcid: string;
+      confidence_tier: string;
+      confidence_score: number;
+      accepted_articles: number;
+      total_articles: number;
+      identity_orcid: string;
+      orcid_matches_identity: boolean;
+    }>;
+  } | null>(null);
 
   useEffect(() => {
     async function loadResearchers() {
@@ -150,6 +166,9 @@ export default function PipelinePage() {
             review_band: number;
             unlikely: number;
           }>("/api/pipeline/status").then(setSummary).catch(() => {});
+          apiFetch<typeof orcidReport>("/api/scores/orcid-report")
+            .then((d) => { if (d && d.total_with_orcid > 0) setOrcidReport(d); })
+            .catch(() => {});
         }
       },
       () => setRunning(false)
@@ -355,7 +374,7 @@ export default function PipelinePage() {
                   Needs Review
                 </p>
                 <p className="text-xs text-amber-700 mt-2 leading-relaxed">
-                  These articles scored between 10 and 95. The system found some
+                  These articles scored between 30 and 95. The system found some
                   matching evidence but not enough for high confidence. A
                   librarian or curator should review these to confirm or reject.
                 </p>
@@ -371,7 +390,7 @@ export default function PipelinePage() {
                   Unlikely Match
                 </p>
                 <p className="text-xs text-red-600 mt-2 leading-relaxed">
-                  These articles scored below 10, meaning they are very unlikely
+                  These articles scored below 30, meaning they are very unlikely
                   to belong to the researcher. They typically appear because the
                   researcher shares a common name with other authors.
                 </p>
@@ -408,6 +427,88 @@ export default function PipelinePage() {
               </div>
             </CardContent>
           </Card>
+
+          {/* ORCID Inference Report */}
+          {orcidReport && orcidReport.total_with_orcid > 0 && (
+            <Card className="border-blue-200 bg-blue-50/50 shadow-sm">
+              <CardContent className="p-5">
+                <div className="flex items-center justify-between mb-3">
+                  <p className="text-sm font-medium text-gray-800">
+                    ORCID Inference Report
+                  </p>
+                  <a href={apiExportUrl("/api/scores/orcid-report/export")} download>
+                    <Button variant="outline" size="sm">Export CSV</Button>
+                  </a>
+                </div>
+                <p className="text-xs text-gray-600 mb-4 leading-relaxed">
+                  We found ORCID identifiers for{" "}
+                  <strong>{orcidReport.total_with_orcid}</strong> researchers by
+                  examining the author position in scored articles. When the same
+                  ORCID consistently appears at the target author position across
+                  high-confidence articles, we can infer it belongs to the researcher.
+                </p>
+
+                {/* Tier summary */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
+                  {[
+                    { key: "confirmed", label: "Confirmed", color: "text-green-700", bg: "bg-green-100",
+                      tip: "5+ high-confidence articles with the same ORCID, no contradictions" },
+                    { key: "likely", label: "Likely", color: "text-blue-700", bg: "bg-blue-100",
+                      tip: "2-4 high-confidence articles with consistent ORCID" },
+                    { key: "possible", label: "Possible", color: "text-amber-700", bg: "bg-amber-100",
+                      tip: "Single article — could be correct but not enough to confirm" },
+                    { key: "unreliable", label: "Unreliable", color: "text-red-600", bg: "bg-red-100",
+                      tip: "Only in low-scoring articles, or competing ORCIDs" },
+                  ].map((t) => (
+                    <div key={t.key} className={`rounded-lg p-3 ${t.bg}`}>
+                      <p className={`text-xl font-bold ${t.color}`}>
+                        {orcidReport.tier_counts[t.key] || 0}
+                      </p>
+                      <p className={`text-xs font-medium ${t.color}`}>{t.label}</p>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Top inferences preview */}
+                {orcidReport.inferences.length > 0 && (
+                  <div className="border border-gray-200 rounded-lg overflow-hidden text-xs">
+                    <div className="grid grid-cols-[1fr_160px_80px_70px] gap-2 px-3 py-1.5 bg-gray-100 text-gray-500 uppercase tracking-wider font-medium" style={{ fontSize: "9px" }}>
+                      <span>Researcher</span>
+                      <span>ORCID</span>
+                      <span>Tier</span>
+                      <span>Articles</span>
+                    </div>
+                    {orcidReport.inferences.slice(0, 8).map((r, i) => (
+                      <div key={i} className="grid grid-cols-[1fr_160px_80px_70px] gap-2 px-3 py-1.5 border-t border-gray-100 text-gray-700">
+                        <span className="truncate">{r.first_name} {r.last_name}</span>
+                        <a
+                          href={`https://orcid.org/${r.orcid}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-[#cf4520] truncate"
+                        >
+                          {r.orcid}
+                        </a>
+                        <span className={
+                          r.confidence_tier === "confirmed" ? "text-green-600" :
+                          r.confidence_tier === "likely" ? "text-blue-600" :
+                          r.confidence_tier === "possible" ? "text-amber-600" : "text-red-500"
+                        }>
+                          {r.confidence_tier}
+                        </span>
+                        <span>{r.accepted_articles}/{r.total_articles}</span>
+                      </div>
+                    ))}
+                    {orcidReport.inferences.length > 8 && (
+                      <div className="px-3 py-1.5 border-t border-gray-100 text-gray-400 text-center">
+                        ... and {orcidReport.inferences.length - 8} more (download CSV for full report)
+                      </div>
+                    )}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          )}
 
           {/* Next steps */}
           <div className="flex gap-3">

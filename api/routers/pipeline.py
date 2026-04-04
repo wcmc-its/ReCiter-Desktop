@@ -53,7 +53,7 @@ def status(db: Session = Depends(get_db)):
             PersonArticleScore.calibrated_score >= 0.95
         ).count()
         unlikely = db.query(PersonArticleScore).filter(
-            PersonArticleScore.calibrated_score < 0.10
+            PersonArticleScore.calibrated_score < 0.30
         ).count()
         review_band = total_scores - high_confidence - unlikely
 
