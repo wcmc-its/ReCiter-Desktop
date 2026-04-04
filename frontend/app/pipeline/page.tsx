@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { PipelineRow, Phase } from "@/components/pipeline-row";
+import { InfoTip } from "@/components/info-tip";
 import { apiFetch } from "@/lib/api";
 import { subscribeSSE } from "@/lib/sse";
 
@@ -26,6 +27,11 @@ export default function PipelinePage() {
   const [mode, setMode] = useState<"full" | "score_only">("full");
   const hasExistingScores = researchers.some((r) => r.phase === "complete");
   const [showCompleted, setShowCompleted] = useState(false);
+
+  // Timing state
+  const [startTime, setStartTime] = useState<number | null>(null);
+  const [avgTimePerResearcher, setAvgTimePerResearcher] = useState<number>(0);
+  const [researcherStartTimes, setResearcherStartTimes] = useState<Record<string, number>>({});
 
   useEffect(() => {
     async function loadResearchers() {
@@ -52,9 +58,23 @@ export default function PipelinePage() {
     loadResearchers();
   }, []);
 
+  function formatDuration(ms: number): string {
+    const seconds = Math.floor(ms / 1000);
+    if (seconds < 60) return `${seconds}s`;
+    const minutes = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    if (minutes < 60) return `${minutes}m ${secs}s`;
+    const hours = Math.floor(minutes / 60);
+    const mins = minutes % 60;
+    return `${hours}h ${mins}m`;
+  }
+
   function startPipeline() {
     setRunning(true);
     setCompleted(0);
+    setStartTime(Date.now());
+    setAvgTimePerResearcher(0);
+    setResearcherStartTimes({});
     const personIds = researchers.map((r) => r.personId);
     setTotal(personIds.length);
 
@@ -69,9 +89,11 @@ export default function PipelinePage() {
             )
           );
         } else if (event.type === "processing") {
+          const pid = event.person_id as string;
+          setResearcherStartTimes((prev) => ({ ...prev, [pid]: Date.now() }));
           setResearchers((prev) =>
             prev.map((r) =>
-              r.personId === event.person_id
+              r.personId === pid
                 ? { ...r, phase: "retrieving" }
                 : r
             )
@@ -81,9 +103,22 @@ export default function PipelinePage() {
           const scoredCount = event.scored_count as number;
           const scoreMin = event.score_min as number | undefined;
           const scoreMax = event.score_max as number | undefined;
-          setCompleted(event.completed as number);
+          const completedCount = event.completed as number;
+
+          setCompleted(completedCount);
           setTotalArticles((prev) => prev + artCount);
           setTotalScored((prev) => prev + scoredCount);
+
+          // Update rolling average using startTime from closure
+          setStartTime((prevStart) => {
+            if (prevStart !== null) {
+              const elapsed = Date.now() - prevStart;
+              const avg = elapsed / completedCount;
+              setAvgTimePerResearcher(avg);
+            }
+            return prevStart;
+          });
+
           setResearchers((prev) =>
             prev.map((r) =>
               r.personId === event.person_id
@@ -113,11 +148,24 @@ export default function PipelinePage() {
   );
   const queuedResearchers = researchers.filter((r) => r.phase === "queued");
 
+  // Determine bottleneck researchers: processing time > 2x average
+  const now = Date.now();
+  const bottleneckIds = new Set<string>(
+    avgTimePerResearcher > 0
+      ? activeResearchers
+          .filter((r) => {
+            const rStart = researcherStartTimes[r.personId];
+            return rStart !== undefined && (now - rStart) > avgTimePerResearcher * 2;
+          })
+          .map((r) => r.personId)
+      : []
+  );
+
   return (
     <div className="max-w-4xl">
       <h2 className="text-2xl font-semibold mb-2 text-gray-900">Processing Pipeline</h2>
       <p className="text-gray-500 mb-6">
-        Run the scoring pipeline for all researchers.
+        Retrieve articles and compute confidence scores for each researcher.
       </p>
 
       {!running && completed === 0 && (
@@ -131,6 +179,9 @@ export default function PipelinePage() {
             >
               {hasExistingScores ? "Update (new publications only)" : "Full Retrieval and Scoring"}
             </Button>
+            {!hasExistingScores && (
+              <InfoTip text="Searches PubMed by researcher name to discover all candidate publications, then scores each one." />
+            )}
             <Button
               variant={mode === "score_only" ? "default" : "outline"}
               size="sm"
@@ -139,6 +190,7 @@ export default function PipelinePage() {
             >
               Scoring Only
             </Button>
+            <InfoTip text="Scores only the articles you uploaded via PMID CSV. No PubMed search." />
           </div>
           {hasExistingScores && mode === "full" && (
             <p className="text-xs text-gray-400">
@@ -166,6 +218,16 @@ export default function PipelinePage() {
             </span>
           </div>
           <Progress value={total > 0 ? (completed / total) * 100 : 0} className="h-2" />
+          {running && completed > 0 && startTime && (
+            <div className="flex justify-between text-xs text-gray-400 mt-1">
+              <span>
+                Elapsed: {formatDuration(Date.now() - startTime)}
+              </span>
+              <span>
+                Est. remaining: {formatDuration(avgTimePerResearcher * (total - completed))}
+              </span>
+            </div>
+          )}
         </div>
       )}
 
@@ -195,7 +257,7 @@ export default function PipelinePage() {
 
           {/* Active researchers first */}
           {activeResearchers.map((r) => (
-            <PipelineRow key={r.personId} {...r} />
+            <PipelineRow key={r.personId} {...r} isBottleneck={bottleneckIds.has(r.personId)} />
           ))}
 
           {/* Queued researchers */}

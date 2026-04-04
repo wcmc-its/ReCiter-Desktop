@@ -102,13 +102,13 @@ export default function ResearchersPage() {
     <div className="max-w-3xl">
       <h2 className="text-2xl font-semibold mb-2 text-gray-900">Researchers</h2>
       <p className="text-gray-500 mb-6">
-        Upload your researcher list to get started.
+        Add your faculty and researchers so we can find their publications.
       </p>
 
       {!uploadResult ? (
         <FileUpload
           onFileSelected={handleFile}
-          description="A spreadsheet with one row per researcher. At minimum, include a unique ID, first name, and last name. Optional: email, title, primary institution, department, doctoral year, ORCID."
+          description="Your faculty roster or researcher list — one person per row. At minimum, include a unique ID, first name, and last name. Optional: email, title, primary institution, department, doctoral year, ORCID."
         />
       ) : (
         <div className="space-y-6">

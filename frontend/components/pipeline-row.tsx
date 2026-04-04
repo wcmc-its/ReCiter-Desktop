@@ -43,6 +43,7 @@ interface PipelineRowProps {
   articleCount: number | null;
   scoreRange?: string;
   progress?: number;
+  isBottleneck?: boolean;
 }
 
 export function PipelineRow({
@@ -52,6 +53,7 @@ export function PipelineRow({
   articleCount,
   scoreRange,
   progress,
+  isBottleneck,
 }: PipelineRowProps) {
   const isActive = !["queued", "complete", "error"].includes(phase);
 
@@ -75,7 +77,7 @@ export function PipelineRow({
       <span className="text-sm text-gray-500">
         {articleCount ?? "\u2014"}
       </span>
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 flex-wrap">
         {isActive && (
           <span className={`text-xs animate-spin ${PHASE_COLORS[phase]}`}>
             {"\u25E0"}
@@ -87,6 +89,9 @@ export function PipelineRow({
         <span className={`text-sm ${PHASE_COLORS[phase]}`}>
           {PHASE_LABELS[phase]}
         </span>
+        {isBottleneck && (
+          <span className="text-xs text-amber-500 font-medium">Taking longer than usual</span>
+        )}
       </div>
       <div className="w-full">
         {isActive && progress !== undefined && (

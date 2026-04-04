@@ -5,6 +5,7 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { StatusCard } from "@/components/status-card";
+import { InfoTip } from "@/components/info-tip";
 import { apiFetch } from "@/lib/api";
 
 interface DashboardState {
@@ -56,7 +57,7 @@ export default function Dashboard() {
 
   // Determine next step
   let nextHref = "/setup";
-  let nextLabel = "Set Up Your Institution";
+  let nextLabel = "Get Started";
   if (hasInstitution && !hasResearchers) {
     nextHref = "/researchers";
     nextLabel = "Upload Researchers";
@@ -77,25 +78,25 @@ export default function Dashboard() {
         confidence scores for each article-researcher match.
       </p>
 
-      <div className="grid grid-cols-4 gap-4 mb-8">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
         <StatusCard
           stepNumber={1}
           label="Institution"
-          value={state.institution || "Not configured"}
+          value={state.institution || "Ready to set up"}
           isComplete={hasInstitution}
           isNext={!hasInstitution}
         />
         <StatusCard
           stepNumber={2}
           label="Researchers"
-          value={hasResearchers ? `${state.researcherCount} loaded` : "Not uploaded"}
+          value={hasResearchers ? `${state.researcherCount} loaded` : "Add your faculty"}
           isComplete={hasResearchers}
           isNext={hasInstitution && !hasResearchers}
         />
         <StatusCard
           stepNumber={3}
           label="Articles"
-          value={hasArticles ? `${state.articleCount} retrieved` : "Not yet retrieved"}
+          value={hasArticles ? `${state.articleCount} retrieved` : "Find their publications"}
           isComplete={hasArticles}
           isNext={hasResearchers && !hasArticles && !hasScores}
         />
@@ -105,7 +106,7 @@ export default function Dashboard() {
           value={
             hasScores
               ? `${state.scoreCount} scored`
-              : "Not yet scored"
+              : "Get confidence scores"
           }
           isComplete={hasScores}
           isNext={hasArticles && !hasScores}
@@ -126,7 +127,9 @@ export default function Dashboard() {
             </p>
             <p className="text-xs text-gray-500 leading-relaxed">
               Your scores are currently based on identity evidence alone (25
-              features including name matching, email, affiliation, and more).
+              features
+              <InfoTip text="Name matching, email, institutional affiliation, journal relevance, degree year, gender inference, article/author counts, and more." />
+              {" "}including name matching, email, affiliation, and more).
               Institutions that curate articles — accepting or rejecting
               individual matches — unlock a more powerful model with 43 features
               that learns from those decisions. Curation support is coming in a

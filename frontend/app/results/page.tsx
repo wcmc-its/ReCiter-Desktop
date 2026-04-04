@@ -68,7 +68,7 @@ export default function ResultsPage() {
         ))}
         {scored.length === 0 && (
           <div className="px-4 py-8 text-center text-gray-400">
-            No scored researchers yet. Run the pipeline first.
+            No results yet. Go to the Pipeline page to retrieve and score articles for your researchers.
           </div>
         )}
       </div>

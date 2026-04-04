@@ -96,7 +96,10 @@ export default function ResearcherResultsPage() {
       {/* Score distribution histogram */}
       {articles.length > 0 && (
         <div className="mb-6">
-          <p className="text-xs text-gray-500 mb-2">Score distribution</p>
+          <div className="flex justify-between text-xs text-gray-500 mb-1">
+            <span>Score distribution</span>
+            <span>{above} likely matches &middot; {below} unlikely</span>
+          </div>
           <div className="flex items-end gap-0.5 h-16">
             {Array.from({ length: 10 }, (_, i) => {
               const lo = i * 10;
@@ -120,11 +123,16 @@ export default function ResearcherResultsPage() {
               );
             })}
           </div>
+          <div className="flex justify-between text-[9px] text-gray-400 mt-1">
+            <span className="text-red-400">Likely not a match</span>
+            <span className="text-gray-300">|</span>
+            <span className="text-green-600">Likely match</span>
+          </div>
         </div>
       )}
 
       {/* Threshold slider */}
-      <div className="flex items-center gap-4 mb-6">
+      <div className="flex flex-wrap items-center gap-4 mb-6">
         <span className="text-sm text-gray-500">Threshold:</span>
         <div className="w-48">
           <Slider
@@ -160,11 +168,11 @@ export default function ResearcherResultsPage() {
 
       {/* Article table */}
       <div className="border border-gray-200 rounded-lg overflow-hidden shadow-sm">
-        <div className="grid grid-cols-[60px_1fr_180px_60px_60px] gap-2 px-4 py-2 bg-gray-50 text-xs text-gray-500 uppercase tracking-wider">
+        <div className="grid grid-cols-[60px_1fr_60px] sm:grid-cols-[60px_1fr_180px_60px_60px] gap-2 px-4 py-2 bg-gray-50 text-xs text-gray-500 uppercase tracking-wider">
           <span>Score</span>
           <span>Title</span>
-          <span>Journal</span>
-          <span>Year</span>
+          <span className="hidden sm:block">Journal</span>
+          <span className="hidden sm:block">Year</span>
           <span />
         </div>
         {sorted.map((a) => {
@@ -177,7 +185,7 @@ export default function ResearcherResultsPage() {
           return (
             <div key={a.pmid} className="border-t border-gray-200">
               <div
-                className="grid grid-cols-[60px_1fr_180px_60px_60px] gap-2 items-center px-4 py-2.5 bg-white cursor-pointer hover:bg-gray-50"
+                className="grid grid-cols-[60px_1fr_60px] sm:grid-cols-[60px_1fr_180px_60px_60px] gap-2 items-center px-4 py-2.5 bg-white cursor-pointer hover:bg-gray-50"
                 onClick={() => setExpandedPmid(isExpanded ? null : a.pmid)}
               >
                 <ScoreBadge score={a.score} />
@@ -188,8 +196,8 @@ export default function ResearcherResultsPage() {
                 >
                   {a.title}
                 </span>
-                <span className="text-xs text-gray-500 truncate">{a.journal}</span>
-                <span className="text-xs text-gray-500">{a.pub_year}</span>
+                <span className="hidden sm:block text-xs text-gray-500 truncate">{a.journal}</span>
+                <span className="hidden sm:block text-xs text-gray-500">{a.pub_year}</span>
                 <a
                   href={`https://pubmed.ncbi.nlm.nih.gov/${a.pmid}/`}
                   target="_blank"

@@ -60,8 +60,9 @@ export default function ArticlesPage() {
     <div className="max-w-2xl">
       <h2 className="text-2xl font-semibold mb-2 text-gray-900">Articles</h2>
       <p className="text-gray-500 mb-6">
-        Upload a list of known PMIDs to score. Use this when you already have
-        publication lists and just need scores (Scoring Only mode).
+        Already have a list of publications? Upload PMIDs to score them directly.
+        Use this when you already have publication lists and just need scores
+        (Scoring Only mode).
       </p>
       <p className="text-gray-400 text-sm mb-6">
         If you want to discover new articles from PubMed instead, skip this page
