@@ -264,6 +264,30 @@ async def run_pipeline(
     mode: "full" (retrieve + score) or "score_only" (score uploaded articles)
     """
     config = load_config()
+
+    # Merge institution config from DB into YAML config
+    db = SessionLocal()
+    try:
+        from api.models import Institution as InstitutionModel
+        import json as _json
+        db_config = db.query(InstitutionModel).all()
+        for row in db_config:
+            key = row.config_key
+            try:
+                val = _json.loads(row.config_value)
+            except (ValueError, TypeError):
+                val = row.config_value
+            if key == "email_suffixes":
+                config.setdefault("institution", {})["email_suffixes"] = val
+            elif key == "home_institution_keywords":
+                config.setdefault("institution", {})["home_institution_keywords"] = val
+            elif key == "collaborating_institution_keywords":
+                config.setdefault("institution", {})["collaborating_keywords"] = val
+            elif key == "institution_label":
+                config.setdefault("institution", {})["institution_label"] = val
+    finally:
+        db.close()
+
     model_dir = os.path.join(
         os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
         "models", "wcm",

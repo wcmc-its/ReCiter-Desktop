@@ -44,7 +44,7 @@ def extract_email_domains(affiliations: list[str]) -> list[tuple[str, int]]:
     email_re = re.compile(r"[\w.+-]+@([\w-]+\.[\w.-]+)")
     for aff in affiliations:
         for match in email_re.finditer(aff):
-            domain = match.group(1).lower()
+            domain = match.group(1).lower().rstrip(".")
             domain_counts[domain] += 1
     return domain_counts.most_common()
 
