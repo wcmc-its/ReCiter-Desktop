@@ -34,6 +34,21 @@ async def run(req: PipelineRequest, db: Session = Depends(get_db)):
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
+def get_assertion_count(db: Session) -> int:
+    """Count distinct (person_id, pmid) pairs with both a score and a curation."""
+    from api.models import PersonArticleScore, Curation
+    return (
+        db.query(PersonArticleScore.person_id, PersonArticleScore.pmid)
+        .join(
+            Curation,
+            (PersonArticleScore.person_id == Curation.person_id) &
+            (PersonArticleScore.pmid == Curation.pmid)
+        )
+        .distinct()
+        .count()
+    )
+
+
 @router.get("/status")
 def status(db: Session = Depends(get_db)):
     from sqlalchemy import func
@@ -57,6 +72,8 @@ def status(db: Session = Depends(get_db)):
         ).count()
         review_band = total_scores - high_confidence - unlikely
 
+    assertion_count = get_assertion_count(db)
+
     return {
         "total_researchers": total_researchers,
         "total_articles": total_articles,
@@ -65,4 +82,5 @@ def status(db: Session = Depends(get_db)):
         "high_confidence": high_confidence,
         "review_band": review_band,
         "unlikely": unlikely,
+        "assertion_count": assertion_count,
     }
