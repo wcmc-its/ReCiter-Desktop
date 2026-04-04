@@ -35,7 +35,12 @@ What shipped: Docker Compose app (Next.js + FastAPI + MariaDB), institution setu
   4. Score distribution response contains ACCEPTED and REJECTED counts per 10-point bucket covering 0–100
   5. Top-10 disagreements are ranked by `|score - assertion_value|` (ACCEPTED=100, REJECTED=0) and returned with person_id, pmid, score, assertion
   6. Response includes `viable` flag and `below_n_threshold` warning when n < 50; returns a structured error when all assertions are the same label (single-class)
-**Plans**: TBD
+**Plans:** 3 plans
+
+Plans:
+- [ ] 01-01-PLAN.md — Wave 0: Test suite scaffolding (15 unit tests for STATS-01 through STATS-06)
+- [ ] 01-02-PLAN.md — Stats service implementation (all computation functions + data prep)
+- [ ] 01-03-PLAN.md — Router + wiring (HTTP layer + main.py registration)
 
 ### Phase 2: Workflow Wiring and Navigation
 **Goal**: The stats page is reachable from the sidebar and from pipeline completion, and is locked behind the correct gate condition
@@ -65,6 +70,6 @@ What shipped: Docker Compose app (Next.js + FastAPI + MariaDB), institution setu
 
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
-| 1. Backend Stats Endpoint | v1.1 | 0/TBD | Not started | - |
+| 1. Backend Stats Endpoint | v1.1 | 0/3 | Planning complete | - |
 | 2. Workflow Wiring and Navigation | v1.1 | 0/TBD | Not started | - |
 | 3. Stats Page Frontend | v1.1 | 0/TBD | Not started | - |
