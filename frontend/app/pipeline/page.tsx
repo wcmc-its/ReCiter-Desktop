@@ -7,7 +7,6 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { PipelineRow, Phase } from "@/components/pipeline-row";
-import { InfoTip } from "@/components/info-tip";
 import { apiFetch, apiExportUrl } from "@/lib/api";
 import { subscribeSSE } from "@/lib/sse";
 
@@ -202,42 +201,64 @@ export default function PipelinePage() {
       </p>
 
       {!running && completed === 0 && (
-        <div className="space-y-4 mb-6">
-          <div className="flex gap-2">
-            <Button
-              variant={mode === "full" ? "default" : "outline"}
-              size="sm"
+        <div className="mb-6">
+          {/* Tab bar */}
+          <div className="flex border-b border-gray-200 mb-0">
+            <button
               onClick={() => setMode("full")}
-              className={mode === "full" ? "bg-[#cf4520] hover:bg-[#a3381a] text-white" : ""}
+              className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
+                mode === "full"
+                  ? "border-[#cf4520] text-[#cf4520]"
+                  : "border-transparent text-gray-500 hover:text-gray-700"
+              }`}
             >
               {hasExistingScores ? "Update (new publications only)" : "Full Retrieval and Scoring"}
-            </Button>
-            {!hasExistingScores && (
-              <InfoTip text="Searches PubMed by researcher name to discover all candidate publications, then scores each one." />
-            )}
-            <Button
-              variant={mode === "score_only" ? "default" : "outline"}
-              size="sm"
+            </button>
+            <button
               onClick={() => setMode("score_only")}
-              className={mode === "score_only" ? "bg-[#cf4520] hover:bg-[#a3381a] text-white" : ""}
+              className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
+                mode === "score_only"
+                  ? "border-[#cf4520] text-[#cf4520]"
+                  : "border-transparent text-gray-500 hover:text-gray-700"
+              }`}
             >
               Scoring Only
-            </Button>
-            <InfoTip text="Scores only the articles you uploaded via PMID CSV. No PubMed search." />
+            </button>
           </div>
-          {hasExistingScores && mode === "full" && (
-            <p className="text-xs text-gray-400">
-              Only newly added publications since the last run will be retrieved and scored.
-              Previously scored articles are kept.
-            </p>
-          )}
-          <Button
-            onClick={startPipeline}
-            disabled={researchers.length === 0}
-            className="bg-[#cf4520] hover:bg-[#a3381a] text-white"
-          >
-            Run Pipeline ({researchers.length} researchers)
-          </Button>
+
+          {/* Tab content */}
+          <div className="bg-white border border-t-0 border-gray-200 rounded-b-lg p-5 shadow-sm">
+            {mode === "full" ? (
+              <div>
+                <p className="text-sm text-gray-700 mb-1">
+                  {hasExistingScores
+                    ? "Search PubMed for newly added publications since the last run."
+                    : "Search PubMed for each researcher by name to discover candidate publications."}
+                </p>
+                <p className="text-xs text-gray-400 mb-4">
+                  {hasExistingScores
+                    ? "Previously scored articles and their scores are preserved. Only new articles will be retrieved and scored."
+                    : "The system retrieves articles, identifies the target author, computes evidence features, and scores each match."}
+                </p>
+              </div>
+            ) : (
+              <div>
+                <p className="text-sm text-gray-700 mb-1">
+                  Score articles you already uploaded via PMID CSV.
+                </p>
+                <p className="text-xs text-gray-400 mb-4">
+                  No PubMed search is performed. Use this when you already have complete publication lists and just need confidence scores.
+                </p>
+              </div>
+            )}
+            <Button
+              onClick={startPipeline}
+              disabled={researchers.length === 0}
+              className="bg-[#cf4520] hover:bg-[#a3381a] text-white"
+            >
+              Run Pipeline ({researchers.length} researchers)
+            </Button>
+          </div>
         </div>
       )}
 
