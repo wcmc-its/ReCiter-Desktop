@@ -1,144 +1,146 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { StatusCard } from "@/components/status-card";
-import { InfoTip } from "@/components/info-tip";
-import { apiFetch } from "@/lib/api";
-
-interface DashboardState {
-  institution: string | null;
-  researcherCount: number;
-  articleCount: number;
-  scoreCount: number;
-  scoredResearchers: number;
-}
+import { useWorkflow } from "@/lib/workflow";
 
 export default function Dashboard() {
-  const [state, setState] = useState<DashboardState>({
-    institution: null,
-    researcherCount: 0,
-    articleCount: 0,
-    scoreCount: 0,
-    scoredResearchers: 0,
-  });
+  const {
+    institution,
+    researcherCount,
+    articleCount,
+    scoreCount,
+    loading,
+  } = useWorkflow();
 
-  useEffect(() => {
-    async function load() {
-      try {
-        const config = await apiFetch<Record<string, unknown>>("/api/institution");
-        const status = await apiFetch<{
-          total_researchers: number;
-          total_articles: number;
-          total_scores: number;
-          scored_researchers: number;
-        }>("/api/pipeline/status");
-
-        setState({
-          institution: (config.institution_label as string) || null,
-          researcherCount: status.total_researchers,
-          articleCount: status.total_articles,
-          scoreCount: status.total_scores,
-          scoredResearchers: status.scored_researchers,
-        });
-      } catch {
-        // API not available yet
-      }
-    }
-    load();
-  }, []);
-
-  const hasInstitution = !!state.institution;
-  const hasResearchers = state.researcherCount > 0;
-  const hasArticles = state.articleCount > 0;
-  const hasScores = state.scoreCount > 0;
+  const hasInstitution = !!institution;
+  const hasResearchers = researcherCount > 0;
+  const hasScores = scoreCount > 0;
 
   // Determine next step
   let nextHref = "/setup";
   let nextLabel = "Get Started";
+  let nextDescription = "Set up your institution to begin.";
   if (hasInstitution && !hasResearchers) {
     nextHref = "/researchers";
     nextLabel = "Upload Researchers";
+    nextDescription = "Add your faculty roster to start finding their publications.";
   } else if (hasResearchers && !hasScores) {
     nextHref = "/pipeline";
     nextLabel = "Run Pipeline";
+    nextDescription = "Retrieve articles and compute confidence scores.";
   } else if (hasScores) {
     nextHref = "/results";
     nextLabel = "View Results";
+    nextDescription = "Review scored articles and export your data.";
+  }
+
+  if (loading) {
+    return (
+      <div className="max-w-3xl">
+        <p className="text-gray-400">Loading...</p>
+      </div>
+    );
   }
 
   return (
-    <div className="max-w-4xl">
-      <h2 className="text-2xl font-semibold mb-2 text-gray-900">ReCiter Desktop</h2>
+    <div className="max-w-3xl">
+      <h2 className="text-2xl font-semibold mb-2 text-gray-900">
+        ReCiter Desktop
+      </h2>
       <p className="text-gray-500 mb-8">
         Score publications against researcher identities using machine learning.
-        Upload a researcher list, retrieve articles from PubMed, and get
-        confidence scores for each article-researcher match.
       </p>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-        <StatusCard
-          stepNumber={1}
-          label="Institution"
-          value={state.institution || "Ready to set up"}
-          isComplete={hasInstitution}
-          isNext={!hasInstitution}
-        />
-        <StatusCard
-          stepNumber={2}
-          label="Researchers"
-          value={hasResearchers ? `${state.researcherCount} loaded` : "Add your faculty"}
-          isComplete={hasResearchers}
-          isNext={hasInstitution && !hasResearchers}
-        />
-        <StatusCard
-          stepNumber={3}
-          label="Articles"
-          value={hasArticles ? `${state.articleCount} retrieved` : "Find their publications"}
-          isComplete={hasArticles}
-          isNext={hasResearchers && !hasArticles && !hasScores}
-        />
-        <StatusCard
-          stepNumber={4}
-          label="Scores"
-          value={
-            hasScores
-              ? `${state.scoreCount} scored`
-              : "Get confidence scores"
-          }
-          isComplete={hasScores}
-          isNext={hasArticles && !hasScores}
-        />
-      </div>
-
-      <Link href={nextHref}>
-        <Button size="lg" className="bg-[#cf4520] hover:bg-[#a3381a] text-white">
-          {nextLabel}
-        </Button>
-      </Link>
-
-      {hasInstitution && (
-        <Card className="mt-8 border-gray-200 bg-gray-50 shadow-sm">
-          <CardContent className="p-4">
-            <p className="text-sm font-medium text-gray-700 mb-2">
-              About Scoring Models
+      {/* Current status */}
+      {(hasInstitution || hasResearchers || hasScores) && (
+        <Card className="border-gray-200 shadow-sm mb-6">
+          <CardContent className="p-5">
+            <p className="text-xs text-gray-400 uppercase tracking-wider mb-3">
+              Current Status
             </p>
-            <p className="text-xs text-gray-500 leading-relaxed">
-              Your scores are currently based on identity evidence alone (42
-              features
-              <InfoTip text="8 identity features (name, email, gender, degree year), 4 institutional, 3 bibliometric, 3 relationship, and 24 engineered features including name frequency and ambiguity risk." />
-              {" "}including name matching, email, affiliation, and more).
-              Institutions that curate articles — accepting or rejecting
-              individual matches — unlock a more powerful 72-feature model
-              that learns from those decisions, reducing manual review from
-              18% to just 2.3% of articles. Curation support is coming in a
-              future release via Publication Manager.
-            </p>
+            <div className="space-y-2">
+              {hasInstitution && (
+                <div className="flex items-center gap-2 text-sm">
+                  <span className="text-green-500">{"\u2713"}</span>
+                  <span className="text-gray-700">
+                    Institution: <strong>{institution}</strong>
+                  </span>
+                </div>
+              )}
+              {hasResearchers && (
+                <div className="flex items-center gap-2 text-sm">
+                  <span className="text-green-500">{"\u2713"}</span>
+                  <span className="text-gray-700">
+                    {researcherCount.toLocaleString()} researchers loaded
+                  </span>
+                </div>
+              )}
+              {articleCount > 0 && (
+                <div className="flex items-center gap-2 text-sm">
+                  <span className="text-green-500">{"\u2713"}</span>
+                  <span className="text-gray-700">
+                    {articleCount.toLocaleString()} articles retrieved
+                  </span>
+                </div>
+              )}
+              {hasScores && (
+                <div className="flex items-center gap-2 text-sm">
+                  <span className="text-green-500">{"\u2713"}</span>
+                  <span className="text-gray-700">
+                    {scoreCount.toLocaleString()} articles scored
+                  </span>
+                </div>
+              )}
+            </div>
           </CardContent>
         </Card>
       )}
+
+      {/* Next step */}
+      <Card className="border-[#cf4520]/30 bg-[#cf4520]/5 shadow-sm mb-8">
+        <CardContent className="p-5">
+          <p className="text-xs text-gray-400 uppercase tracking-wider mb-2">
+            Next Step
+          </p>
+          <p className="text-sm text-gray-700 mb-3">{nextDescription}</p>
+          <Link href={nextHref}>
+            <Button className="bg-[#cf4520] hover:bg-[#a3381a] text-white">
+              {nextLabel}
+            </Button>
+          </Link>
+        </CardContent>
+      </Card>
+
+      {/* Education panel */}
+      <Card className="border-gray-200 bg-white shadow-sm">
+        <CardContent className="p-5">
+          <p className="text-sm font-medium text-gray-800 mb-2">
+            About CARE Scoring
+          </p>
+          <p className="text-xs text-gray-500 leading-relaxed">
+            ReCiter Desktop uses the CARE (Composite Author Recognition Engine)
+            scoring pipeline. Each article receives a calibrated confidence score
+            from 0 to 100, representing the probability it belongs to the
+            researcher.{" "}
+            {hasScores ? (
+              <>
+                Your scores are based on identity evidence (42 features).
+                Importing accept/reject curation data activates a more powerful
+                72-feature model that reduces manual review from 18% to 2.3% of
+                articles.
+              </>
+            ) : (
+              <>
+                The model was trained on over 900,000 curated articles at Weill
+                Cornell Medicine and validated at external institutions with
+                99.99% accuracy at the 99% confidence threshold.
+              </>
+            )}
+          </p>
+        </CardContent>
+      </Card>
     </div>
   );
 }

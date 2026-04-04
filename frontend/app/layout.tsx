@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
 import { Sidebar } from "@/components/sidebar";
+import { Providers } from "@/components/providers";
 
 const inter = Inter({ subsets: ["latin"] });
 
@@ -24,10 +25,12 @@ export default function RootLayout({
             <span className="font-semibold text-sm tracking-wide">ReCiter Desktop</span>
           </div>
         </header>
-        <div className="flex min-h-[calc(100vh-48px)]">
-          <Sidebar />
-          <main className="flex-1 p-8">{children}</main>
-        </div>
+        <Providers>
+          <div className="flex min-h-[calc(100vh-48px)]">
+            <Sidebar />
+            <main className="flex-1 p-8">{children}</main>
+          </div>
+        </Providers>
       </body>
     </html>
   );

@@ -8,6 +8,8 @@ import { Card, CardContent } from "@/components/ui/card";
 import { FileUpload } from "@/components/file-upload";
 import { ColumnMapper } from "@/components/column-mapper";
 import { apiUpload, apiFetch } from "@/lib/api";
+import { PrerequisiteGate } from "@/components/prerequisite-gate";
+import { useWorkflow } from "@/lib/workflow";
 
 interface MappingRow {
   original: string;
@@ -28,6 +30,7 @@ interface UploadResult {
 
 export default function ResearchersPage() {
   const router = useRouter();
+  const { institution, refresh } = useWorkflow();
   const [uploadResult, setUploadResult] = useState<UploadResult | null>(null);
   const [mappings, setMappings] = useState<MappingRow[]>([]);
   const [importGoldStandard, setImportGoldStandard] = useState(true);
@@ -73,6 +76,7 @@ export default function ResearchersPage() {
 
   // Success state
   if (importResult) {
+    refresh();
     return (
       <div className="max-w-2xl">
         <h2 className="text-2xl font-semibold mb-6 text-gray-900">Researchers</h2>
@@ -99,6 +103,12 @@ export default function ResearchersPage() {
   }
 
   return (
+    <PrerequisiteGate
+      met={!!institution}
+      message="Set up your institution first so the scoring pipeline knows which affiliations to match."
+      actionLabel="Go to Institution Setup"
+      actionHref="/setup"
+    >
     <div className="max-w-3xl">
       <h2 className="text-2xl font-semibold mb-2 text-gray-900">Researchers</h2>
       <p className="text-gray-500 mb-6">
@@ -211,5 +221,6 @@ export default function ResearchersPage() {
         </div>
       )}
     </div>
+    </PrerequisiteGate>
   );
 }
