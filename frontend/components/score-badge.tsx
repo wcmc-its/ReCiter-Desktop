@@ -2,10 +2,10 @@
 export function ScoreBadge({ score }: { score: number }) {
   let bg: string;
   let text: string;
-  if (score >= 70) {
+  if (score >= 95) {
     bg = "bg-green-50";
     text = "text-green-700";
-  } else if (score >= 30) {
+  } else if (score >= 10) {
     bg = "bg-amber-50";
     text = "text-amber-700";
   } else {

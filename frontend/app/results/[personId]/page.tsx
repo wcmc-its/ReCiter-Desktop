@@ -46,7 +46,7 @@ export default function ResearcherResultsPage() {
 
   const [researcher, setResearcher] = useState<ResearcherInfo | null>(null);
   const [articles, setArticles] = useState<ScoredArticle[]>([]);
-  const [threshold, setThreshold] = useState(70);
+  const [threshold, setThreshold] = useState(95);
   const [sortBy, setSortBy] = useState<"score" | "year" | "journal">("score");
   const [expandedPmid, setExpandedPmid] = useState<string | null>(null);
 

@@ -126,13 +126,14 @@ export default function Dashboard() {
               About Scoring Models
             </p>
             <p className="text-xs text-gray-500 leading-relaxed">
-              Your scores are currently based on identity evidence alone (25
+              Your scores are currently based on identity evidence alone (42
               features
-              <InfoTip text="Name matching, email, institutional affiliation, journal relevance, degree year, gender inference, article/author counts, and more." />
+              <InfoTip text="8 identity features (name, email, gender, degree year), 4 institutional, 3 bibliometric, 3 relationship, and 24 engineered features including name frequency and ambiguity risk." />
               {" "}including name matching, email, affiliation, and more).
               Institutions that curate articles — accepting or rejecting
-              individual matches — unlock a more powerful model with 43 features
-              that learns from those decisions. Curation support is coming in a
+              individual matches — unlock a more powerful 72-feature model
+              that learns from those decisions, reducing manual review from
+              18% to just 2.3% of articles. Curation support is coming in a
               future release via Publication Manager.
             </p>
           </CardContent>

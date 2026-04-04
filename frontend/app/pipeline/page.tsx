@@ -2,11 +2,13 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { PipelineRow, Phase } from "@/components/pipeline-row";
 import { InfoTip } from "@/components/info-tip";
-import { apiFetch } from "@/lib/api";
+import { apiFetch, apiExportUrl } from "@/lib/api";
 import { subscribeSSE } from "@/lib/sse";
 
 interface ResearcherStatus {
@@ -32,6 +34,12 @@ export default function PipelinePage() {
   const [startTime, setStartTime] = useState<number | null>(null);
   const [avgTimePerResearcher, setAvgTimePerResearcher] = useState<number>(0);
   const [researcherStartTimes, setResearcherStartTimes] = useState<Record<string, number>>({});
+  const [pipelineFinished, setPipelineFinished] = useState(false);
+  const [summary, setSummary] = useState<{
+    high_confidence: number;
+    review_band: number;
+    unlikely: number;
+  } | null>(null);
 
   useEffect(() => {
     async function loadResearchers() {
@@ -136,6 +144,12 @@ export default function PipelinePage() {
           );
         } else if (event.type === "finished") {
           setRunning(false);
+          setPipelineFinished(true);
+          apiFetch<{
+            high_confidence: number;
+            review_band: number;
+            unlikely: number;
+          }>("/api/pipeline/status").then(setSummary).catch(() => {});
         }
       },
       () => setRunning(false)
@@ -294,6 +308,118 @@ export default function PipelinePage() {
                 ))}
             </div>
           )}
+        </div>
+      )}
+
+      {/* ── Completion Summary ── */}
+      {pipelineFinished && summary && (
+        <div className="mt-8 space-y-6">
+          <div className="border-t-2 border-green-400 pt-6">
+            <h3 className="text-lg font-semibold text-gray-900 mb-1">
+              Pipeline Complete
+            </h3>
+            <p className="text-sm text-gray-500 mb-6">
+              {totalScored.toLocaleString()} articles scored across{" "}
+              {completed} researchers.
+              {startTime && (
+                <> Total time: {formatDuration(Date.now() - startTime)}.</>
+              )}
+            </p>
+          </div>
+
+          {/* Confidence tier cards */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <Card className="border-green-200 bg-green-50 shadow-sm">
+              <CardContent className="p-5">
+                <p className="text-3xl font-bold text-green-700">
+                  {summary.high_confidence.toLocaleString()}
+                </p>
+                <p className="text-sm font-medium text-green-800 mt-1">
+                  High Confidence
+                </p>
+                <p className="text-xs text-green-600 mt-2 leading-relaxed">
+                  These articles scored 95 or above, meaning there is at least a
+                  95% probability they belong to the researcher. In validation
+                  testing, 99.95% of articles at this level were correctly
+                  attributed.
+                </p>
+              </CardContent>
+            </Card>
+
+            <Card className="border-amber-200 bg-amber-50 shadow-sm">
+              <CardContent className="p-5">
+                <p className="text-3xl font-bold text-amber-700">
+                  {summary.review_band.toLocaleString()}
+                </p>
+                <p className="text-sm font-medium text-amber-800 mt-1">
+                  Needs Review
+                </p>
+                <p className="text-xs text-amber-700 mt-2 leading-relaxed">
+                  These articles scored between 10 and 95. The system found some
+                  matching evidence but not enough for high confidence. A
+                  librarian or curator should review these to confirm or reject.
+                </p>
+              </CardContent>
+            </Card>
+
+            <Card className="border-red-200 bg-red-50 shadow-sm">
+              <CardContent className="p-5">
+                <p className="text-3xl font-bold text-red-600">
+                  {summary.unlikely.toLocaleString()}
+                </p>
+                <p className="text-sm font-medium text-red-700 mt-1">
+                  Unlikely Match
+                </p>
+                <p className="text-xs text-red-600 mt-2 leading-relaxed">
+                  These articles scored below 10, meaning they are very unlikely
+                  to belong to the researcher. They typically appear because the
+                  researcher shares a common name with other authors.
+                </p>
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* What these numbers mean */}
+          <Card className="border-gray-200 bg-white shadow-sm">
+            <CardContent className="p-5">
+              <p className="text-sm font-medium text-gray-800 mb-3">
+                What do these scores mean?
+              </p>
+              <div className="space-y-3 text-xs text-gray-600 leading-relaxed">
+                <p>
+                  Each score represents a <strong>calibrated probability</strong>{" "}
+                  that the article belongs to the researcher. A score of 95 means
+                  approximately 95 out of 100 articles at that confidence level are
+                  correctly attributed. This is different from most disambiguation
+                  systems, which produce rankings rather than true probabilities.
+                </p>
+                <p>
+                  The model was trained on over 900,000 curated article-researcher
+                  pairs at Weill Cornell Medicine and validated at external
+                  institutions including Fred Hutchinson Cancer Center (868
+                  researchers, 99.995% accuracy at the 99% threshold).
+                </p>
+                <p>
+                  <strong>Tip:</strong> If you have accept/reject decisions from
+                  prior curation work, import them on the Researchers page. This
+                  activates a more powerful 72-feature model that reduces the
+                  &quot;Needs Review&quot; count by up to 87%.
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Next steps */}
+          <div className="flex gap-3">
+            <Link href="/results">
+              <Button className="bg-[#cf4520] hover:bg-[#a3381a] text-white">
+                View Results
+              </Button>
+            </Link>
+            <a href={apiExportUrl("/api/scores/export")} download>
+              <Button variant="outline">Export All Scores (CSV)</Button>
+            </a>
+          </div>
         </div>
       )}
     </div>

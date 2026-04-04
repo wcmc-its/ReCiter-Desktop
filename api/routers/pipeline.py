@@ -44,9 +44,25 @@ def status(db: Session = Depends(get_db)):
     total_scores = db.query(PersonArticleScore).count()
     scored_researchers = db.query(PersonArticleScore.person_id).distinct().count()
 
+    # Score distribution for summary stats
+    high_confidence = 0
+    review_band = 0
+    unlikely = 0
+    if total_scores > 0:
+        high_confidence = db.query(PersonArticleScore).filter(
+            PersonArticleScore.calibrated_score >= 0.95
+        ).count()
+        unlikely = db.query(PersonArticleScore).filter(
+            PersonArticleScore.calibrated_score < 0.10
+        ).count()
+        review_band = total_scores - high_confidence - unlikely
+
     return {
         "total_researchers": total_researchers,
         "total_articles": total_articles,
         "total_scores": total_scores,
         "scored_researchers": scored_researchers,
+        "high_confidence": high_confidence,
+        "review_band": review_band,
+        "unlikely": unlikely,
     }

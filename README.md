@@ -26,14 +26,14 @@ PUBMED_API_KEY=your_key docker compose up
 
 ## How It Works
 
-ReCiter Desktop uses the CARE (Comprehensive Author Recognition Engine) scoring pipeline to determine whether a PubMed article belongs to a given researcher. For each article-researcher pair, the system:
+ReCiter Desktop uses the CARE (Composite Author Recognition Engine) scoring pipeline to determine whether a PubMed article belongs to a given researcher. For each article-researcher pair, the system:
 
 1. **Retrieves** candidate articles from PubMed by name
 2. **Matches** the target author in each article's author list using a 19-step cascade
-3. **Analyzes** up to 25 evidence features: name matching, email, institutional affiliation, journal relevance, degree year, gender inference, and more
+3. **Analyzes** up to 42 evidence features (72 with curation data): name matching, email, institutional affiliation, journal relevance, degree year, gender inference, derived uncertainty features, and more
 4. **Scores** each pair using a pre-trained XGBoost model, calibrated to a 0-100 confidence scale
 
-The pre-trained models are from Weill Cornell Medicine's production ReCiter system, trained on tens of thousands of curated article-researcher pairs.
+The pre-trained models are from Weill Cornell Medicine's production ReCiter system, trained on over 900,000 curated article-researcher pairs and validated on 25,091 held-out assertions (AUC 0.9993, 99.99% accuracy at 99% confidence). External validation at Fred Hutchinson Cancer Center (868 researchers) confirmed cross-site generalization without retraining.
 
 ## User Workflow
 
@@ -110,14 +110,16 @@ When curation data is present, the system uses a more powerful 43-feature scorin
 
 | Model | Features | When Used |
 |-------|----------|-----------|
-| Identity Only | 25 (19 base + 6 derived) | No curation data available |
-| Feedback + Identity | 43 (31 base + 12 derived) | Curation data imported |
+| Identity Only | 42 (18 base + 24 engineered) | No curation data available |
+| Feedback + Identity | 72 (18 base + 15 feedback + 5 uncertainty + 24 engineered + 8 feedback-derived + 2 counts) | Curation data imported |
 
-The identity-only model scores based on researcher identity evidence: name matching, email, affiliation, journal relevance, degree year, gender inference, article/author counts.
+The **identity-only model** uses 8 identity features (name, email, gender, degree year), 4 institutional features (affiliation, department, grants), 3 bibliometric features (journal, author/article count), 3 relationship features, and 24 engineered features (name frequency, ambiguity risk, interaction terms). AUC 0.9776, 99.57% accuracy at 95% confidence.
 
-The feedback model adds 12 additional features from curation patterns: co-author overlap, keyword similarity, journal history, institutional patterns across accepted/rejected articles.
+The **feedback model** adds 15 feedback synthesis features (sigmoid-based aggregation of prior curation decisions across co-authors, journals, keywords, institutions, etc.), 5 derived uncertainty features (Wilson lower bound acceptance rate, feedback confidence), and 8 feedback-specific derived features. AUC 0.9993, 99.99% accuracy at 99% confidence. Feedback features account for 84.8% of model importance.
 
-Both models use isotonic calibration to produce well-calibrated 0-100 confidence scores.
+Curation reduces manual review burden from 18% to 2.3% of articles (87% reduction).
+
+Both models use isotonic regression calibration — scores are true probabilities. A score of 95 means 95% of articles at that level are correctly attributed.
 
 ## API Reference
 
