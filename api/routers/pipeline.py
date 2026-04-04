@@ -56,6 +56,8 @@ def status(db: Session = Depends(get_db)):
 
     total_researchers = db.query(Identity).count()
     total_articles = db.query(PersonArticle).count()
+    uploaded_articles = db.query(PersonArticle).filter(PersonArticle.source == "upload").count()
+    searched_articles = db.query(PersonArticle).filter(PersonArticle.source == "search").count()
     total_scores = db.query(PersonArticleScore).count()
     scored_researchers = db.query(PersonArticleScore.person_id).distinct().count()
 
@@ -77,6 +79,8 @@ def status(db: Session = Depends(get_db)):
     return {
         "total_researchers": total_researchers,
         "total_articles": total_articles,
+        "uploaded_articles": uploaded_articles,
+        "searched_articles": searched_articles,
         "total_scores": total_scores,
         "scored_researchers": scored_researchers,
         "high_confidence": high_confidence,

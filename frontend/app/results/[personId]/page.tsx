@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
 import { ScoreBadge } from "@/components/score-badge";
 import { apiFetch, apiExportUrl } from "@/lib/api";
+import { subscribeSSE } from "@/lib/sse";
 
 interface ScoredArticle {
   pmid: string;
@@ -15,7 +16,7 @@ interface ScoredArticle {
   journal: string;
   pub_year: number;
   doi: string;
-  features: Record<string, number>;
+  features: { shap?: Record<string, number> };
 }
 
 interface ResearcherInfo {
@@ -49,15 +50,30 @@ export default function ResearcherResultsPage() {
   const [threshold, setThreshold] = useState(95);
   const [sortBy, setSortBy] = useState<"score" | "year" | "journal">("score");
   const [expandedPmid, setExpandedPmid] = useState<string | null>(null);
+  const [rescoring, setRescoring] = useState(false);
+
+  function fetchScores() {
+    apiFetch<ScoredArticle[]>(`/api/scores/${personId}`)
+      .then(setArticles)
+      .catch(() => {});
+  }
 
   useEffect(() => {
     apiFetch<ResearcherInfo>(`/api/researchers/${personId}`)
       .then(setResearcher)
       .catch(() => {});
-    apiFetch<ScoredArticle[]>(`/api/scores/${personId}`)
-      .then(setArticles)
-      .catch(() => {});
+    fetchScores();
   }, [personId]);
+
+  function handleRescore() {
+    setRescoring(true);
+    subscribeSSE(
+      "/api/pipeline/run",
+      { person_ids: [personId], mode: "score_only" },
+      () => {},
+      () => { fetchScores(); setRescoring(false); }
+    );
+  }
 
   const sorted = [...articles].sort((a, b) => {
     if (sortBy === "score") return b.score - a.score;
@@ -82,15 +98,20 @@ export default function ResearcherResultsPage() {
             {articles.length} articles scored
           </p>
         </div>
-        <a
-          href={apiExportUrl("/api/scores/export", {
-            person_id: personId,
-            threshold: String(threshold),
-          })}
-          download
-        >
-          <Button variant="outline">Export CSV</Button>
-        </a>
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={handleRescore} disabled={rescoring}>
+            {rescoring ? "Re-scoring…" : "Re-score"}
+          </Button>
+          <a
+            href={apiExportUrl("/api/scores/export", {
+              person_id: personId,
+              threshold: String(threshold),
+            })}
+            download
+          >
+            <Button variant="outline">Export CSV</Button>
+          </a>
+        </div>
       </div>
 
       {/* Score distribution histogram */}
@@ -177,10 +198,16 @@ export default function ResearcherResultsPage() {
         </div>
         {sorted.map((a) => {
           const isExpanded = expandedPmid === a.pmid;
-          const topFeatures = Object.entries(a.features || {})
-            .filter(([, v]) => v !== 0)
+          const shap = a.features?.shap ?? {};
+          const shapEntries = Object.entries(shap)
+            .filter(([k, v]) => k in FEATURE_LABELS && v !== 0)
             .sort((x, y) => Math.abs(y[1]) - Math.abs(x[1]))
-            .slice(0, 5);
+            .slice(0, 8);
+          const maxAbs = shapEntries.length > 0
+            ? Math.max(...shapEntries.map(([, v]) => Math.abs(v)))
+            : 1;
+          const supports = shapEntries.filter(([, v]) => v > 0);
+          const conflicts = shapEntries.filter(([, v]) => v < 0);
 
           return (
             <div key={a.pmid} className="border-t border-gray-200">
@@ -189,11 +216,7 @@ export default function ResearcherResultsPage() {
                 onClick={() => setExpandedPmid(isExpanded ? null : a.pmid)}
               >
                 <ScoreBadge score={a.score} />
-                <span
-                  className={`text-sm ${
-                    a.score >= threshold ? "text-gray-900" : "text-gray-400"
-                  }`}
-                >
+                <span className={`text-sm ${a.score >= threshold ? "text-gray-900" : "text-gray-400"}`}>
                   {a.title}
                 </span>
                 <span className="hidden sm:block text-xs text-gray-500 truncate">{a.journal}</span>
@@ -208,25 +231,36 @@ export default function ResearcherResultsPage() {
                   PubMed
                 </a>
               </div>
-              {isExpanded && topFeatures.length > 0 && (
-                <div className="bg-gray-50 border-t border-gray-100 px-4 py-3 space-y-1.5">
-                  <p className="text-[10px] text-gray-400 uppercase tracking-wider mb-2">Top evidence</p>
-                  {topFeatures.map(([key, val]) => (
-                    <div key={key} className="flex items-center gap-3">
-                      <span className="text-xs text-gray-600 w-48 shrink-0">
-                        {FEATURE_LABELS[key] ?? key}
-                      </span>
-                      <div className="flex-1 bg-gray-200 rounded h-1.5 overflow-hidden">
-                        <div
-                          className={`h-full rounded ${val >= 0 ? 'bg-green-500' : 'bg-red-400'}`}
-                          style={{ width: `${Math.min(Math.abs(val) * 100, 100)}%` }}
-                        />
-                      </div>
-                      <span className={`text-xs font-mono w-12 text-right ${val >= 0 ? 'text-green-600' : 'text-red-500'}`}>
-                        {val.toFixed(3)}
-                      </span>
+              {isExpanded && shapEntries.length > 0 && (
+                <div className="bg-gray-50 border-t border-gray-100 px-4 py-4">
+                  {supports.length > 0 && (
+                    <div className="mb-3">
+                      <p className="text-[9px] text-green-700 uppercase tracking-wider font-medium mb-2">Supports authorship</p>
+                      {supports.map(([key, val]) => (
+                        <div key={key} className="flex items-center gap-3 mb-1.5">
+                          <span className="text-xs text-gray-600 w-44 shrink-0">{FEATURE_LABELS[key]}</span>
+                          <div className="flex-1 bg-gray-200 rounded h-1.5 overflow-hidden">
+                            <div className="h-full rounded bg-green-500" style={{ width: `${(Math.abs(val) / maxAbs) * 100}%` }} />
+                          </div>
+                          <span className="text-xs font-mono w-16 text-right text-green-600">+{val.toFixed(2)} pts</span>
+                        </div>
+                      ))}
                     </div>
-                  ))}
+                  )}
+                  {conflicts.length > 0 && (
+                    <div>
+                      <p className="text-[9px] text-red-500 uppercase tracking-wider font-medium mb-2">Against authorship</p>
+                      {conflicts.map(([key, val]) => (
+                        <div key={key} className="flex items-center gap-3 mb-1.5">
+                          <span className="text-xs text-gray-600 w-44 shrink-0">{FEATURE_LABELS[key]}</span>
+                          <div className="flex-1 bg-gray-200 rounded h-1.5 overflow-hidden">
+                            <div className="h-full rounded bg-red-400" style={{ width: `${(Math.abs(val) / maxAbs) * 100}%` }} />
+                          </div>
+                          <span className="text-xs font-mono w-16 text-right text-red-500">{val.toFixed(2)} pts</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
             </div>

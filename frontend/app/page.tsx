@@ -29,7 +29,7 @@ export default function Dashboard() {
   } else if (hasResearchers && !hasScores) {
     nextHref = "/pipeline";
     nextLabel = "Run Pipeline";
-    nextDescription = "Retrieve articles and compute confidence scores.";
+    nextDescription = "Retrieve articles and compute authorship likelihood scores.";
   } else if (hasScores) {
     nextHref = "/results";
     nextLabel = "View Results";

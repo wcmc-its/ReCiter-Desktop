@@ -53,7 +53,7 @@ Plans:
 **Plans:** 2 plans
 
 Plans:
-- [ ] 02-01-PLAN.md — Backend assertion_count field + WorkflowContext extension
+- [x] 02-01-PLAN.md — Backend assertion_count field + WorkflowContext extension
 - [ ] 02-02-PLAN.md — Sidebar entry, pipeline CTA, /stats route with gate
 
 ### Phase 3: Stats Page Frontend

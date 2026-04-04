@@ -226,10 +226,8 @@ def _process_one_researcher(
                 person_id=person_id, pmid=pmid, model_type=model_type
             ).first()
             score_val = float(row.get("calibrated_score", 0))
-            features_dict = {
-                k: float(v) if isinstance(v, (int, float)) else v
-                for k, v in row.items() if k not in ("pmid", "calibrated_score", "raw_score")
-            }
+            shap = row.get("shap_values")
+            features_dict = {"shap": dict(shap)} if isinstance(shap, dict) else {}
             if existing_score:
                 existing_score.calibrated_score = score_val
                 existing_score.raw_score = float(row.get("raw_score", 0))

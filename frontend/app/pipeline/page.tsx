@@ -207,7 +207,7 @@ export default function PipelinePage() {
     <div className="max-w-4xl">
       <h2 className="text-2xl font-semibold mb-2 text-gray-900">Processing Pipeline</h2>
       <p className="text-gray-500 mb-6">
-        Retrieve articles and compute confidence scores for each researcher.
+        Retrieve articles and compute authorship likelihood scores for each researcher.
       </p>
 
       {!running && completed === 0 && (
@@ -257,7 +257,7 @@ export default function PipelinePage() {
                   Score articles you already uploaded via PMID CSV.
                 </p>
                 <p className="text-xs text-gray-400 mb-4">
-                  No PubMed search is performed. Use this when you already have complete publication lists and just need confidence scores.
+                  Skips name-based PubMed discovery. Use this when article metadata is already in the database — a PMID list alone is not sufficient, since the full record (title, authors, affiliations, journal) must be retrieved before scoring.
                 </p>
               </div>
             )}

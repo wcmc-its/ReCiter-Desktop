@@ -13,6 +13,7 @@ from typing import Dict, List
 import joblib
 import numpy as np
 import pandas as pd
+import xgboost as xgb
 
 from core.preprocessing import (
     FEEDBACK_IDENTITY_BASE_FEATURES,
@@ -29,6 +30,21 @@ _MODEL_DIR = Path(__file__).parent.parent / "models"
 
 # Cache loaded models to avoid re-reading from disk
 _model_cache: dict = {}
+
+
+def _compute_shap(model, X_scaled: np.ndarray, feature_names: list) -> list[dict]:
+    """Compute per-feature SHAP contributions using XGBoost's native tree SHAP.
+
+    Returns a list of dicts (one per sample) mapping feature name → contribution
+    in log-odds space. The bias term is excluded.
+    """
+    dmat = xgb.DMatrix(X_scaled)
+    contribs = model.get_booster().predict(dmat, pred_contribs=True)
+    # contribs shape: (n_samples, n_features + 1) — last col is bias
+    return [
+        {feature_names[j]: round(float(contribs[i, j]), 4) for j in range(len(feature_names))}
+        for i in range(contribs.shape[0])
+    ]
 
 
 def _load_model_set(model_dir: str, model_type: str) -> dict:
@@ -132,6 +148,7 @@ def score_articles(
 
         df_fb["raw_score"] = raw_fb
         df_fb["calibrated_score"] = np.clip(score_fb / 100, 0.0, 1.0)
+        df_fb["shap_values"] = _compute_shap(fb_models["model"], X_fb, FEEDBACK_IDENTITY_FEATURES)
         return df_fb
 
     else:
@@ -152,4 +169,5 @@ def score_articles(
 
         df_io["raw_score"] = raw_io
         df_io["calibrated_score"] = np.clip(score_io / 100, 0.0, 1.0)
+        df_io["shap_values"] = _compute_shap(io_models["model"], X_io, IDENTITY_ONLY_FEATURES)
         return df_io

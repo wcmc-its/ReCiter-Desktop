@@ -9,12 +9,20 @@ type StepStatus = "complete" | "next" | "locked" | "none";
 
 export function Sidebar() {
   const pathname = usePathname();
-  const { institution, researcherCount, scoreCount, assertionCount } = useWorkflow();
+  const { institution, researcherCount, articleCount, uploadedArticles, searchedArticles, scoreCount, assertionCount } = useWorkflow();
 
   const hasInstitution = !!institution;
   const hasResearchers = researcherCount > 0;
+  const hasArticles = articleCount > 0;
   const hasScores = scoreCount > 0;
   const hasAssertions = assertionCount > 0;
+
+  const articleSubtitle = hasArticles
+    ? [
+        uploadedArticles > 0 ? `${uploadedArticles} uploaded` : null,
+        searchedArticles > 0 ? `${searchedArticles} retrieved` : null,
+      ].filter(Boolean).join(" · ")
+    : null;
 
   const workflowItems: Array<{
     href: string;
@@ -38,7 +46,7 @@ export function Sidebar() {
     {
       href: "/articles",
       label: "Articles",
-      status: hasResearchers ? "none" : "locked",
+      status: hasArticles ? "complete" : hasResearchers ? "next" : "locked",
     },
     {
       href: "/pipeline",
@@ -115,7 +123,12 @@ export function Sidebar() {
                 : "text-gray-300 hover:text-white hover:bg-[#2c3e50]/60"
             )}
           >
-            <span>{item.label}</span>
+            <span className="flex flex-col">
+              <span>{item.label}</span>
+              {item.href === "/articles" && articleSubtitle && (
+                <span className="text-[10px] text-gray-400 leading-tight">{articleSubtitle}</span>
+              )}
+            </span>
             {statusIcon[item.status] && (
               <span className={`text-xs ${statusColor[item.status]}`}>
                 {statusIcon[item.status]}
