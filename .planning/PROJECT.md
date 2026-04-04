@@ -39,6 +39,15 @@ An institution can go from researcher list to scored publications in minutes, us
 - [ ] Benchmark reference lines from WCM and Fred Hutch overlaid on charts
 - [ ] Strongest Disagreements section: top 5 inline + link to filtered Results page
 
+### Validated in Phase 1: Backend Stats Endpoint
+
+- ✓ `GET /api/stats` endpoint computes ROC/AUC + 95% bootstrap CI (1000 resamples) — STATS-01
+- ✓ Calibration: exactly 10 fixed bins via `np.digitize`, n-per-bin counts — STATS-02
+- ✓ PR curve: baseline = actual positive rate (not 0.5) — STATS-03
+- ✓ Score distribution: 10-bucket histogram split by ACCEPTED/REJECTED — STATS-04
+- ✓ Strongest disagreements: ranked by |score − assertion_value| — STATS-05
+- ✓ Viability flags: gate output when n=0, single-class, or n<50 — STATS-06
+
 ### Out of Scope
 
 - Per-researcher stats drill-down — aggregate across run is sufficient for v1.1
@@ -90,4 +99,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-04-04 — Milestone v1.1 started*
+*Last updated: 2026-04-04 — Phase 1 complete: `/api/stats` endpoint live*
