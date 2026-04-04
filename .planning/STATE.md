@@ -1,3 +1,19 @@
+---
+gsd_state_version: 1.0
+milestone: v1.1
+milestone_name: Statistics & Validation View
+status: planning
+stopped_at: Completed 01-02-PLAN.md (stats_service implementation)
+last_updated: "2026-04-04T15:51:26.781Z"
+last_activity: 2026-04-04 — Roadmap created for v1.1 Statistics & Validation View
+progress:
+  total_phases: 3
+  completed_phases: 0
+  total_plans: 3
+  completed_plans: 0
+  percent: 0
+---
+
 # State
 
 ## Project Reference
@@ -19,6 +35,7 @@ Progress: [░░░░░░░░░░] 0%
 ## Performance Metrics
 
 **Velocity:**
+
 - Total plans completed: 0
 - Average duration: —
 - Total execution time: —
@@ -30,6 +47,7 @@ Progress: [░░░░░░░░░░] 0%
 | - | - | - | - |
 
 *Updated after each plan completion*
+| Phase 01-backend-stats-endpoint P02 | 257 | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -39,6 +57,9 @@ Progress: [░░░░░░░░░░] 0%
 - v1.0: Docker Compose (3 containers) — isolation and consistent environment
 - v1.0: SSE for long-running operations — real-time progress without polling complexity
 - v1.0: Assertions imported as curations — activates feedback model, enables stats
+- [Phase 01-backend-stats-endpoint]: stats_service: pr_baseline = actual positive rate (not 0.5) per STATS-03
+- [Phase 01-backend-stats-endpoint]: stats_service: np.digitize for calibration bins (sklearn calibration_curve drops empty bins)
+- [Phase 01-backend-stats-endpoint]: stats_service: per-researcher feedbackIdentity model selection done in Python not SQL (D-01)
 
 ### Pending Todos
 
@@ -52,6 +73,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-04-04
-Stopped at: Roadmap written; no plans created yet
+Last session: 2026-04-04T15:51:26.779Z
+Stopped at: Completed 01-02-PLAN.md (stats_service implementation)
 Resume file: None
