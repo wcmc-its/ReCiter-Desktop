@@ -1,92 +1,106 @@
 # Requirements: ReCiter Desktop
 
-**Defined:** 2026-04-04
-**Milestone:** v1.1 — Statistics & Validation View
+**Defined:** 2026-04-05
 **Core Value:** An institution can go from researcher list to scored publications in minutes, using the same production-validated models as Weill Cornell Medicine.
 
-## v1.1 Requirements
+## v2.0 Requirements
 
-### Stats API
+Requirements for Pipeline Parity & Performance milestone. Each maps to roadmap phases.
 
-- [x] **STATS-01**: Backend computes ROC curve points, AUC scalar value, and bootstrap 95% CI for AUC
-- [x] **STATS-02**: Backend computes calibration bins (10 uniform bins, n-per-bin counts included), gated at n≥50 joined (score, assertion) pairs
-- [x] **STATS-03**: Backend computes PR curve points, AUC-PR scalar, and prevalence-anchored no-skill baseline value
-- [x] **STATS-04**: Backend returns score distribution binned by assertion (ACCEPTED/REJECTED counts per 10-point bucket, 0–100)
-- [x] **STATS-05**: Backend returns top-10 strongest disagreements ranked by |score − assertion_value| (ACCEPTED→100, REJECTED→0)
-- [x] **STATS-06**: API returns viability flags (below-n-threshold warning when n<50, single-class-only error when all assertions are the same label)
+### Retrieval Parity
 
-### Charts
+- [ ] **RETR-01**: Pipeline uses affiliation-filtered PubMed search (institution keywords from config) when lenient result count exceeds threshold
+- [ ] **RETR-02**: Pipeline detects compound/derived names (hyphenated, multi-word, middle-as-first) and sets strict-only search mode before retrieval
+- [ ] **RETR-03**: `retrieve_known` mode fetches full PubMed XML for uploaded PMIDs before scoring
+- [ ] **RETR-04**: `update` mode uses correct mindate from last retrieval (ON UPDATE CURRENT_TIMESTAMP removed; score_only does not touch retrieval_log)
+- [ ] **RETR-05**: `update` mode passes end-to-end integration test with known researcher on second run
+- [ ] **RETR-06**: Name quoting handles non-ASCII characters and apostrophes without producing zero-result queries
 
-- [ ] **CHART-01**: User sees ROC curve with mandatory y=x diagonal reference line, AUC headline value, and bootstrap 95% CI displayed
-- [ ] **CHART-02**: User sees calibration plot (reliability diagram) with n-per-bin overlay; warning banner shown when n<50
-- [ ] **CHART-03**: User sees score distribution histogram with ACCEPTED bars in green and REJECTED bars in red, stacked per 10-point bucket
-- [ ] **CHART-04**: User sees precision-recall curve with prevalence-anchored no-skill baseline line
+### Parallel Processing
 
-### Benchmarks
+- [ ] **PARA-01**: Pipeline yields SSE events in completion order via asyncio.as_completed (not submission order)
+- [ ] **PARA-02**: MAX_WORKERS is 8 when PubMed API key is configured, 3 without
 
-- [ ] **BENCH-01**: WCM and Fred Hutch AUC reference lines overlaid on ROC curve
-- [ ] **BENCH-02**: WCM and Fred Hutch AUC-PR reference lines overlaid on PR curve
-- [ ] **BENCH-03**: User sees summary row at top of page: institution AUC | WCM AUC | Fred Hutch AUC
+### Historical Runs
 
-### Disagreements
+- [ ] **HIST-01**: `pipeline_run` table records run metadata (run_id, mode, status, timestamps, counts)
+- [ ] **HIST-02**: `person_article_score` and `retrieval_log` have nullable `run_id` FK; existing scores migrate as run #1
+- [ ] **HIST-03**: `GET /api/pipeline/runs` endpoint lists historical runs
+- [ ] **HIST-04**: Run selector dropdown on Results and Stats pages scopes data to a specific run
 
-- [ ] **DISAG-01**: User sees top-5 strongest disagreements as inline table (score, assertion, researcher name, article title, PubMed link)
-- [ ] **DISAG-02**: "View all disagreements" link navigates to Results page filtered to disagreement cases (high-score+REJECTED and low-score+ACCEPTED)
+### Results Refinement
 
-### Navigation & Gating
+- [ ] **RSLT-01**: Results listing supports text search (researcher name) and score range filter
+- [ ] **RSLT-02**: Per-researcher export button downloads CSV for a single researcher
+- [ ] **RSLT-03**: Results detail shows source label (candidate search vs known/uploaded) per article
 
-- [ ] **NAV-01**: Stats page is gated: sidebar item locked with prerequisite message when no joined (score, assertion) pairs exist; unlocked otherwise
-- [ ] **NAV-02**: Pipeline completion summary shows "View Statistics" CTA link when assertions exist in DB
-- [ ] **NAV-03**: Stats page accessible at /stats route with "Statistics" label in sidebar nav
+### UI Polish
 
-## v2 Requirements
+- [ ] **UIPOL-01**: Setup page stores and displays original institution name (not keyword reconstruction)
+- [ ] **UIPOL-02**: Pipeline page shows last run type per researcher in completed table
+- [ ] **UIPOL-03**: SSE reconnection with exponential backoff recovers pipeline progress on page reload
+- [ ] **UIPOL-04**: Dashboard shows key metrics (total researchers, articles, last run date, overall AUC)
 
-### Enhanced Benchmarks
+## Future Requirements
 
-- **BENCH-04**: Calibration curve overlay from WCM benchmark data (requires WCM calibration curve export — not currently available)
-- **BENCH-05**: PR curve benchmark overlay from Fred Hutch validation run
+Deferred to future release. Tracked but not in current roadmap.
 
-### Per-Researcher Stats
+### Extended Retrieval Strategies
 
-- **RESR-01**: Per-researcher stats drill-down (deferred — aggregate across run is sufficient for v1.1)
+- **RETR-F01**: Full 8-strategy retrieval cascade (grants, departments, known relationships, second initial)
+- **RETR-F02**: DepartmentRetrievalStrategy using organizational_units field
+- **RETR-F03**: OrcidRetrievalStrategy for researchers with ORCID identifiers
+
+### Run Comparison
+
+- **HIST-F01**: Run comparison view — side-by-side score deltas, overlaid ROC curves
+- **HIST-F02**: Pre-computed per-run stats (AUC-ROC, AUC-PR) at completion time
+
+### Stats Enhancements
+
+- **STATS-F01**: WCM/Fred Hutch benchmark reference lines overlaid on ROC and PR charts
+- **STATS-F02**: "View all disagreements" link navigates to filtered Results page
 
 ## Out of Scope
 
 | Feature | Reason |
 |---------|--------|
-| Real-time calibration updates during pipeline run | Stats are post-hoc; computing during run adds complexity with no UX benefit |
-| Custom benchmark upload | WCM/Fred Hutch are the reference institutions; custom upload is v3+ |
-| Per-researcher stats drill-down | Aggregate is sufficient; individual drill-down deferred to v2 |
-| Isotonic calibration comparison chart | Requires WCM calibration data export — not available |
+| Per-researcher stats drill-down | Individual researchers have too few curations for stable AUC; aggregate is sufficient |
+| Real-time calibration updates during pipeline | Stats are post-hoc; partial results produce unstable estimates |
+| Custom benchmark upload | WCM/Fred Hutch are the reference institutions |
+| Automatic re-score after curation import | Couples two distinct operations; keep import and pipeline as separate explicit user actions |
+| Unlimited retmax (no threshold cap) | Strict fallback is the correct mechanism for high-volume names; thresholds match Java's behavior |
+| Grant matching / co-authorship network / Scopus enrichment | Features set to 0.0 with minimal accuracy impact; would require external data sources not available in Desktop |
 
 ## Traceability
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| STATS-01 | Phase 1 | Complete |
-| STATS-02 | Phase 1 | Complete |
-| STATS-03 | Phase 1 | Complete |
-| STATS-04 | Phase 1 | Complete |
-| STATS-05 | Phase 1 | Complete |
-| STATS-06 | Phase 1 | Complete |
-| NAV-01 | Phase 2 | Pending |
-| NAV-02 | Phase 2 | Pending |
-| NAV-03 | Phase 2 | Pending |
-| CHART-01 | Phase 3 | Pending |
-| CHART-02 | Phase 3 | Pending |
-| CHART-03 | Phase 3 | Pending |
-| CHART-04 | Phase 3 | Pending |
-| BENCH-01 | Phase 3 | Pending |
-| BENCH-02 | Phase 3 | Pending |
-| BENCH-03 | Phase 3 | Pending |
-| DISAG-01 | Phase 3 | Pending |
-| DISAG-02 | Phase 3 | Pending |
+| RETR-01 | TBD | Pending |
+| RETR-02 | TBD | Pending |
+| RETR-03 | TBD | Pending |
+| RETR-04 | TBD | Pending |
+| RETR-05 | TBD | Pending |
+| RETR-06 | TBD | Pending |
+| PARA-01 | TBD | Pending |
+| PARA-02 | TBD | Pending |
+| HIST-01 | TBD | Pending |
+| HIST-02 | TBD | Pending |
+| HIST-03 | TBD | Pending |
+| HIST-04 | TBD | Pending |
+| RSLT-01 | TBD | Pending |
+| RSLT-02 | TBD | Pending |
+| RSLT-03 | TBD | Pending |
+| UIPOL-01 | TBD | Pending |
+| UIPOL-02 | TBD | Pending |
+| UIPOL-03 | TBD | Pending |
+| UIPOL-04 | TBD | Pending |
 
 **Coverage:**
-- v1.1 requirements: 18 total
-- Mapped to phases: 18
-- Unmapped: 0 ✓
+- v2.0 requirements: 19 total
+- Mapped to phases: 0
+- Unmapped: 19
 
 ---
-*Requirements defined: 2026-04-04*
-*Last updated: 2026-04-04 — initial definition*
+*Requirements defined: 2026-04-05*
+*Last updated: 2026-04-05 after initial definition*
