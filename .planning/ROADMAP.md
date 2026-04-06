@@ -161,8 +161,8 @@ Plans:
 **Plans:** 2 plans
 
 Plans:
-- [ ] 09-01-PLAN.md — Wave 0: Test infrastructure (pytest.ini, pytest-asyncio, RED-state upsert test stubs)
-- [ ] 09-02-PLAN.md — Wave 1: Replace SELECT+INSERT loops with INSERT ... ON DUPLICATE KEY UPDATE
+- [x] 09-01-PLAN.md — Wave 0: Test infrastructure (pytest.ini, pytest-asyncio, RED-state upsert test stubs)
+- [x] 09-02-PLAN.md — Wave 1: Replace SELECT+INSERT loops with INSERT ... ON DUPLICATE KEY UPDATE
 
 ### Phase 10: Pipeline Page Polish + Number Formatting
 **Goal**: The pipeline page presents accurate copy, correct visual behavior, and consistent number formatting throughout the application
@@ -175,8 +175,11 @@ Plans:
   4. Status text in pipeline rows ("Retrieving from PubMed", "Scoring") uses the same font size as column headers and aligns with them; no misaligned or oversized status labels remain
   5. "Taking longer than usual" appears only in the row of a researcher whose elapsed time exceeds the expected duration — not statically pre-populated in every last-column cell at pipeline start
   6. All numeric values at or above 1,000 display with comma separators throughout the application (pipeline page article counts, results page counts, stats page counts, dashboard metrics)
-**Plans**: TBD
-**UI hint**: yes
+**Plans:** 2 plans
+
+Plans:
+- [ ] 10-01-PLAN.md — Heading/subtitle copy, ETA inter-completion delta, animation direction, progress number formatting
+- [ ] 10-02-PLAN.md — Status font size fix, articleCount formatting, visual verification checkpoint
 
 ### Phase 11: SSE Reconnection + Cancel
 **Goal**: Users can navigate away from and return to an active pipeline run without losing progress, and can cancel a run in flight
@@ -202,6 +205,6 @@ Plans:
 | 6. Historical Pipeline Runs | v2.0 | 0/TBD | Not started | - |
 | 7. Results Refinement | v2.0 | 0/TBD | Not started | - |
 | 8. Stats Scoping + UI Polish | v2.0 | 0/TBD | Not started | - |
-| 9. Parallel Write Race Condition Fix | v2.1 | 0/2 | Planning | - |
-| 10. Pipeline Page Polish + Number Formatting | v2.1 | 0/TBD | Not started | - |
+| 9. Parallel Write Race Condition Fix | v2.1 | 2/2 | Complete | 2026-04-06 |
+| 10. Pipeline Page Polish + Number Formatting | v2.1 | 0/2 | Planning | - |
 | 11. SSE Reconnection + Cancel | v2.1 | 0/TBD | Not started | - |
