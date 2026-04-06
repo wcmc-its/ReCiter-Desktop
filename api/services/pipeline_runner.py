@@ -19,6 +19,8 @@ from api.database import SessionLocal
 from api.models import (
     Identity, Article, PersonArticle, PersonArticleScore, Curation, RetrievalLog,
 )
+from sqlalchemy.dialects.mysql import insert as mysql_insert
+from sqlalchemy import text
 
 # Add project root to path so core/ and features/ are importable
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
@@ -145,36 +147,44 @@ def _process_one_researcher(
             new_pmids = [p for p in search_pmids if str(p) not in existing_pmids]
             if new_pmids:
                 articles = fetch_articles(new_pmids, api_key=api_key or "")
+
+                # Build article rows for bulk upsert
+                article_rows = []
+                pa_rows = []
                 for art in articles:
-                    existing_art = db.query(Article).filter_by(pmid=str(art.pmid)).first()
-                    if not existing_art:
-                        pmid_str = str(art.pmid)
-                        db.add(Article(
-                            pmid=pmid_str,
-                            title=art.title,
-                            journal=art.journal_title,
-                            pub_year=art.pub_year,
-                            doi=art.doi,
-                            abstract_text=art.abstract,
-                            authors=[{
-                                "first_name": a.first_name,
-                                "last_name": a.last_name,
-                                "initials": a.initials,
-                                "affiliation": a.affiliation,
-                                "orcid": getattr(a, "orcid", ""),
-                            } for a in art.authors],
-                            mesh_headings=[{"descriptor_name": m.descriptor_name, "major_topic": m.major_topic} for m in art.mesh_headings] if art.mesh_headings else [],
-                            keywords=art.keywords or [],
-                            grants=art.grants or [],
-                            publication_types=art.publication_types or [],
-                        ))
-                    existing_pa = db.query(PersonArticle).filter_by(
-                        person_id=person_id, pmid=str(art.pmid)
-                    ).first()
-                    if not existing_pa:
-                        db.add(PersonArticle(
-                            person_id=person_id, pmid=str(art.pmid), source="search"
-                        ))
+                    pmid_str = str(art.pmid)
+                    article_rows.append(dict(
+                        pmid=pmid_str,
+                        title=art.title,
+                        journal=art.journal_title,
+                        pub_year=art.pub_year,
+                        doi=art.doi,
+                        abstract_text=art.abstract,
+                        authors=[{
+                            "first_name": a.first_name,
+                            "last_name": a.last_name,
+                            "initials": a.initials,
+                            "affiliation": a.affiliation,
+                            "orcid": getattr(a, "orcid", ""),
+                        } for a in art.authors],
+                        mesh_headings=[{"descriptor_name": m.descriptor_name, "major_topic": m.major_topic} for m in art.mesh_headings] if art.mesh_headings else [],
+                        keywords=art.keywords or [],
+                        grants=art.grants or [],
+                        publication_types=art.publication_types or [],
+                    ))
+                    pa_rows.append(dict(
+                        person_id=person_id, pmid=pmid_str, source="search",
+                    ))
+
+                # Upsert articles — no-op on duplicate (preserve existing article data)
+                if article_rows:
+                    stmt = mysql_insert(Article.__table__).values(article_rows)
+                    db.execute(stmt.on_duplicate_key_update(pmid=stmt.inserted.pmid))
+
+                # Upsert person-article links — no-op on duplicate
+                if pa_rows:
+                    stmt = mysql_insert(PersonArticle.__table__).values(pa_rows)
+                    db.execute(stmt.on_duplicate_key_update(source=stmt.inserted.source))
 
             # Update retrieval log
             if retrieval_log:
@@ -245,30 +255,33 @@ def _process_one_researcher(
         )
         model_type = "feedbackIdentity" if has_curations else "identityOnly"
 
-        # Save scores
+        # Build score rows for bulk upsert
+        score_rows = []
         for _, row in scored_df.iterrows():
             pmid = str(row["pmid"])
-            existing_score = db.query(PersonArticleScore).filter_by(
-                person_id=person_id, pmid=pmid, model_type=model_type
-            ).first()
             score_val = float(row.get("calibrated_score", 0))
             shap = row.get("shap_values")
             features_dict = {"shap": dict(shap)} if isinstance(shap, dict) else {}
-            if existing_score:
-                existing_score.calibrated_score = score_val
-                existing_score.raw_score = float(row.get("raw_score", 0))
-                existing_score.features = features_dict
-                existing_score.run_id = run_id
-            else:
-                db.add(PersonArticleScore(
-                    person_id=person_id,
-                    pmid=pmid,
-                    model_type=model_type,
-                    calibrated_score=score_val,
-                    raw_score=float(row.get("raw_score", 0)),
-                    features=features_dict,
-                    run_id=run_id,
-                ))
+            score_rows.append(dict(
+                person_id=person_id,
+                pmid=pmid,
+                model_type=model_type,
+                calibrated_score=score_val,
+                raw_score=float(row.get("raw_score", 0)),
+                features=features_dict,
+                run_id=run_id,
+            ))
+
+        # Upsert scores — update all score fields on duplicate
+        if score_rows:
+            stmt = mysql_insert(PersonArticleScore.__table__).values(score_rows)
+            db.execute(stmt.on_duplicate_key_update(
+                calibrated_score=stmt.inserted.calibrated_score,
+                raw_score=stmt.inserted.raw_score,
+                features=stmt.inserted.features,
+                run_id=stmt.inserted.run_id,
+                scored_at=text('NOW()'),
+            ))
         db.commit()
 
         return {
