@@ -1,11 +1,10 @@
 // frontend/app/pipeline/page.tsx
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { Progress } from "@/components/ui/progress";
 import { PipelineRow, Phase } from "@/components/pipeline-row";
 import { apiFetch, apiExportUrl } from "@/lib/api";
 import { subscribeSSE } from "@/lib/sse";
@@ -42,6 +41,28 @@ export default function PipelinePage() {
   const [startTime, setStartTime] = useState<number | null>(null);
   const [avgTimePerResearcher, setAvgTimePerResearcher] = useState<number>(0);
   const [researcherStartTimes, setResearcherStartTimes] = useState<Record<string, number>>({});
+
+  // Live activity log
+  const [logLines, setLogLines] = useState<Array<{ time: string; msg: string; type: "info" | "success" | "error" }>>([]);
+
+  // In-flight researcher tracking (client-side inference: ThreadPoolExecutor picks in submission order)
+  const [processingSet, setProcessingSet] = useState<Set<string>>(new Set());
+  const personIdsRef = useRef<string[]>([]);
+  const nextToStartRef = useRef<number>(0);
+  const lastCompletionTimeRef = useRef<number | null>(null);
+
+  // Tick every second while running so elapsed/remaining timers update
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    if (!running) return;
+    const id = setInterval(() => setTick((t) => t + 1), 1000);
+    return () => clearInterval(id);
+  }, [running]);
+
+  function addLog(msg: string, type: "info" | "success" | "error" = "info") {
+    const t = new Date().toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
+    setLogLines((prev) => [...prev.slice(-49), { time: t, msg, type }]);
+  }
   const [pipelineFinished, setPipelineFinished] = useState(false);
   const [summary, setSummary] = useState<{
     high_confidence: number;
@@ -109,19 +130,32 @@ export default function PipelinePage() {
     setResearcherStartTimes({});
     setMaxWorkers(null);
     setCurrentRunId(null);
+    setProcessingSet(new Set());
+    setLogLines([]);
+    lastCompletionTimeRef.current = null;
     const personIds = researchers.map((r) => r.personId);
+    personIdsRef.current = personIds;
+    nextToStartRef.current = 0;
     setTotal(personIds.length);
+    // Capture name map at start time (names don't change during run)
+    const nameMap = Object.fromEntries(researchers.map((r) => [r.personId, r.name]));
 
     subscribeSSE(
       "/api/pipeline/run",
       { person_ids: personIds, mode },
       (event) => {
         if (event.type === "started") {
-          setMaxWorkers((event.max_workers as number) ?? null);
+          const mw = (event.max_workers as number) ?? 3;
+          setMaxWorkers(mw);
           setCurrentRunId((event.run_id as number) ?? null);
+          lastCompletionTimeRef.current = Date.now();
+          // Mark first max_workers researchers as in-flight
+          const initialIds = personIdsRef.current.slice(0, mw);
+          setProcessingSet(new Set(initialIds));
+          nextToStartRef.current = Math.min(mw, personIdsRef.current.length);
+          addLog(`Pipeline started — ${personIdsRef.current.length} researchers · ${mw} workers`);
         } else if (event.type === "queued") {
           const pid = event.person_id as string;
-          // Record start time at queue point for bottleneck detection
           setResearcherStartTimes((prev) => ({ ...prev, [pid]: Date.now() }));
           setResearchers((prev) =>
             prev.map((r) =>
@@ -134,24 +168,34 @@ export default function PipelinePage() {
           const scoreMin = event.score_min as number | undefined;
           const scoreMax = event.score_max as number | undefined;
           const completedCount = event.completed as number;
+          const pid = event.person_id as string;
 
           setCompleted(completedCount);
           setTotalArticles((prev) => prev + artCount);
           setTotalScored((prev) => prev + scoredCount);
 
-          // Update rolling average using startTime from closure
-          setStartTime((prevStart) => {
-            if (prevStart !== null) {
-              const elapsed = Date.now() - prevStart;
-              const avg = elapsed / completedCount;
-              setAvgTimePerResearcher(avg);
+          const now = Date.now();
+          if (lastCompletionTimeRef.current !== null) {
+            const delta = now - lastCompletionTimeRef.current;
+            setAvgTimePerResearcher((prev) => prev === 0 ? delta : (prev + delta) / 2);
+          }
+          lastCompletionTimeRef.current = now;
+
+          // Advance processing set: remove completed, enqueue next in line
+          setProcessingSet((prev) => {
+            const next = new Set(prev);
+            next.delete(pid);
+            const idx = nextToStartRef.current;
+            if (idx < personIdsRef.current.length) {
+              next.add(personIdsRef.current[idx]);
+              nextToStartRef.current = idx + 1;
             }
-            return prevStart;
+            return next;
           });
 
           setResearchers((prev) =>
             prev.map((r) =>
-              r.personId === event.person_id
+              r.personId === pid
                 ? {
                     ...r,
                     phase: event.error ? "error" : "complete",
@@ -164,10 +208,23 @@ export default function PipelinePage() {
                 : r
             )
           );
+
+          const resName = nameMap[pid] ?? pid;
+          if (event.error) {
+            addLog(`✗ ${resName} — ${event.error as string}`, "error");
+          } else {
+            const scoreStr =
+              scoreMin !== undefined && scoreMax !== undefined
+                ? ` · scores ${Math.round(scoreMin * 100)}–${Math.round(scoreMax * 100)}`
+                : "";
+            addLog(`✓ ${resName} — ${scoredCount} articles${scoreStr}`, "success");
+          }
         } else if (event.type === "finished") {
           setRunning(false);
           setPipelineFinished(true);
-          refresh();   // Updates assertionCount in WorkflowContext
+          setProcessingSet(new Set());
+          addLog("Pipeline complete");
+          refresh();
           apiFetch<{
             high_confidence: number;
             review_band: number;
@@ -178,15 +235,24 @@ export default function PipelinePage() {
             .catch(() => {});
         }
       },
-      () => setRunning(false)
+      () => { setRunning(false); setProcessingSet(new Set()); }
     );
   }
 
-  const completedResearchers = researchers.filter((r) => r.phase === "complete");
-  const activeResearchers = researchers.filter(
-    (r) => !["complete", "queued"].includes(r.phase)
+  // Derive display phases: override "queued" → active phase for in-flight researchers
+  const displayedResearchers = researchers.map((r) => {
+    if (r.phase === "complete" || r.phase === "error") return r;
+    if (processingSet.has(r.personId)) {
+      return { ...r, phase: (mode === "score_only" ? "scoring" : "retrieving") as Phase };
+    }
+    return r;
+  });
+
+  const completedResearchers = displayedResearchers.filter((r) => r.phase === "complete");
+  const activeResearchers = displayedResearchers.filter(
+    (r) => !["complete", "queued", "error"].includes(r.phase)
   );
-  const queuedResearchers = researchers.filter((r) => r.phase === "queued");
+  const queuedResearchers = displayedResearchers.filter((r) => r.phase === "queued");
 
   // Determine bottleneck researchers: processing time > 2x average
   const now = Date.now();
@@ -209,9 +275,9 @@ export default function PipelinePage() {
       actionHref="/researchers"
     >
     <div className="max-w-4xl">
-      <h2 className="text-2xl font-semibold mb-2 text-gray-900">Processing Pipeline</h2>
+      <h2 className="text-2xl font-semibold mb-2 text-gray-900">Retrieve &amp; Score</h2>
       <p className="text-gray-500 mb-6">
-        Retrieve articles and compute authorship likelihood scores for each researcher.
+        Retrieve articles and compute authorship likelihood scores for each researcher&apos;s candidate articles.
       </p>
 
       {!running && completed === 0 && (
@@ -281,34 +347,50 @@ export default function PipelinePage() {
           <div className="flex justify-between text-xs text-gray-500 mb-1">
             <span>Overall Progress</span>
             <span>
-              {completed} of {total} researchers &bull; {totalArticles} articles
-              &bull; {totalScored} scored
+              {completed} of {total} researchers &bull; {totalArticles.toLocaleString()} articles
+              &bull; {totalScored.toLocaleString()} scored
             </span>
           </div>
-          <Progress value={total > 0 ? (completed / total) * 100 : 0} className="h-2" />
-          {running && completed > 0 && startTime && (
+          <div className="relative h-3.5 w-full overflow-hidden rounded-full bg-gray-200">
+            <div
+              className={`h-full rounded-full transition-[width] duration-500 ${running ? "pipeline-progress-animated" : "bg-blue-500"}`}
+              style={{ width: `${total > 0 ? (completed / total) * 100 : 0}%` }}
+            />
+          </div>
+          {running && startTime && (
             <div className="flex justify-between text-xs text-gray-400 mt-1">
-              <span>
-                Elapsed: {formatDuration(Date.now() - startTime)}
-              </span>
+              <span>Elapsed: {formatDuration(Date.now() - startTime)}</span>
               <div className="flex gap-4">
                 {maxWorkers && (
-                  <span>Workers: <strong className="text-gray-600">
-                    {Math.min(total - completed, maxWorkers)}/{maxWorkers} active
-                  </strong></span>
+                  <span>Workers: <strong className="text-gray-600">{Math.min(total - completed, maxWorkers)}/{maxWorkers} active</strong></span>
                 )}
-                <span>
-                  Est. remaining: {formatDuration(avgTimePerResearcher * (total - completed))}
-                </span>
+                {completed > 0 && (
+                  <span>Est. remaining: {formatDuration(avgTimePerResearcher * (total - completed))}</span>
+                )}
+              </div>
+            </div>
+          )}
+          {logLines.length > 0 && (
+            <div className="mt-3 rounded-lg border border-gray-200 bg-gray-50 px-4 py-2.5 overflow-y-auto" style={{ maxHeight: "148px" }}>
+              <p className="text-[9px] uppercase tracking-wider text-gray-400 font-semibold mb-1.5">Activity</p>
+              <div className="space-y-0.5 font-mono text-xs">
+                {[...logLines].reverse().map((entry, i) => (
+                  <div key={i} className="flex gap-3">
+                    <span className="text-gray-400 shrink-0">{entry.time}</span>
+                    <span className={entry.type === "success" ? "text-green-600" : entry.type === "error" ? "text-red-500" : "text-gray-500"}>
+                      {entry.msg}
+                    </span>
+                  </div>
+                ))}
               </div>
             </div>
           )}
         </div>
       )}
 
-      {/* Phase legend — simplified to complete/queued/error (processing event removed per D-13) */}
       {(running || completed > 0) && (
         <div className="flex gap-4 mb-4 text-xs text-gray-500">
+          <span><span className="text-blue-500">{"\u25CF"}</span> Processing</span>
           <span><span className="text-green-600">{"\u25CF"}</span> Complete</span>
           <span><span className="text-gray-400">{"\u25CF"}</span> Queued</span>
           <span><span className="text-red-500">{"\u25CF"}</span> Error</span>
@@ -318,8 +400,8 @@ export default function PipelinePage() {
       {/* Researcher table — single flat list */}
       {(running || completed > 0 || researchers.length > 0) && (
         <div className="space-y-1">
-          {/* Column headers */}
-          <div className="grid grid-cols-[200px_120px_100px_200px_80px] gap-2 px-4 py-2 text-[10px] text-gray-500 uppercase tracking-wider border-b border-gray-200">
+          {/* Column headers — grid must match PipelineRow's grid-cols-[1.5fr_1fr_0.6fr_1.2fr_1fr] px-5 */}
+          <div className="grid grid-cols-[1.5fr_1fr_0.6fr_1.2fr_1fr] gap-2 px-5 py-2 text-[10px] text-gray-500 uppercase tracking-wider border-b border-gray-200">
             <span>Researcher</span>
             <span>UID</span>
             <span>Articles</span>
