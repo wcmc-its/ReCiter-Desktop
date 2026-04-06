@@ -8,6 +8,7 @@ import json
 import logging
 import os
 import sys
+from asyncio import as_completed as _as_completed
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from typing import AsyncGenerator
@@ -32,8 +33,7 @@ from core.config import load_config
 
 logger = logging.getLogger(__name__)
 
-# Adaptive worker pool
-MAX_WORKERS = min(4, (os.cpu_count() or 2))
+# MAX_WORKERS module-level constant removed — now adaptive per run (D-12)
 
 
 def _db_identity_to_core(db_identity: Identity) -> CoreIdentity:
@@ -91,6 +91,7 @@ def _process_one_researcher(
     mode: str,
     config: dict,
     model_dir: str,
+    run_id: int | None = None,
 ) -> dict:
     """
     Process a single researcher through the full pipeline.
@@ -103,20 +104,43 @@ def _process_one_researcher(
             return {"person_id": person_id, "error": "Identity not found"}
 
         core_identity = _db_identity_to_core(identity)
-        api_key = os.environ.get("PUBMED_API_KEY")
+        from api.routers.institution import get_pubmed_api_key
+        api_key = get_pubmed_api_key(db)
 
         # Phase 1: Retrieve articles
         person_articles = db.query(PersonArticle).filter_by(person_id=person_id).all()
         existing_pmids = {pa.pmid for pa in person_articles}
 
-        if mode == "full":
-            # Check if this is an incremental run (researcher was previously retrieved)
+        if mode in ("full", "update"):
+            # Check last retrieval date for incremental mode
             retrieval_log = db.query(RetrievalLog).filter_by(person_id=person_id).first()
 
-            search_pmids = search_by_name(
+            # For update mode, use last retrieval date as mindate filter
+            mindate = ""
+            if mode == "update" and retrieval_log and retrieval_log.last_retrieval_date:
+                mindate = retrieval_log.last_retrieval_date.strftime("%Y/%m/%d")
+                logger.info(f"{person_id}: incremental update since {mindate}")
+
+            # Retrieval thresholds from config (matches ReCiter application.properties)
+            retrieval_config = config.get("retrieval", {})
+            lenient_threshold = retrieval_config.get("lenient_threshold", 2000)
+            strict_threshold = retrieval_config.get("strict_threshold", 1000)
+
+            search_result = search_by_name(
                 first_name=core_identity.first_name,
                 last_name=core_identity.last_name,
                 api_key=api_key or "",
+                lenient_threshold=lenient_threshold,
+                strict_threshold=strict_threshold,
+                mindate=mindate,
+            )
+            search_pmids = search_result["pmids"]
+            query_type = search_result["query_type"]
+            logger.info(
+                f"{person_id}: retrieval strategy={query_type}, "
+                f"lenient_count={search_result['lenient_count']}, "
+                f"strict_count={search_result.get('strict_count')}, "
+                f"pmids_returned={len(search_pmids)}"
             )
             new_pmids = [p for p in search_pmids if str(p) not in existing_pmids]
             if new_pmids:
@@ -155,10 +179,12 @@ def _process_one_researcher(
             # Update retrieval log
             if retrieval_log:
                 retrieval_log.articles_found = len(new_pmids)
+                retrieval_log.run_id = run_id
             else:
                 db.add(RetrievalLog(
                     person_id=person_id,
                     articles_found=len(new_pmids),
+                    run_id=run_id,
                 ))
             db.commit()
 
@@ -232,6 +258,7 @@ def _process_one_researcher(
                 existing_score.calibrated_score = score_val
                 existing_score.raw_score = float(row.get("raw_score", 0))
                 existing_score.features = features_dict
+                existing_score.run_id = run_id
             else:
                 db.add(PersonArticleScore(
                     person_id=person_id,
@@ -240,6 +267,7 @@ def _process_one_researcher(
                     calibrated_score=score_val,
                     raw_score=float(row.get("raw_score", 0)),
                     features=features_dict,
+                    run_id=run_id,
                 ))
         db.commit()
 
@@ -260,11 +288,13 @@ def _process_one_researcher(
 async def run_pipeline(
     person_ids: list[str],
     mode: str = "full",
+    run_id: int | None = None,
 ) -> AsyncGenerator[dict, None]:
     """
     Run the scoring pipeline for multiple researchers concurrently.
-    Yields progress events as dicts.
-    mode: "full" (retrieve + score) or "score_only" (score uploaded articles)
+    Yields progress events as dicts in completion order (fastest researcher first).
+    mode: "full" (retrieve + score), "update" (incremental), or "score_only"
+    run_id: optional PipelineRun row PK for tagging scores and retrieval logs
     """
     config = load_config()
 
@@ -291,6 +321,16 @@ async def run_pipeline(
     finally:
         db.close()
 
+    # Determine worker count from API key presence (per D-12)
+    db_for_key = SessionLocal()
+    try:
+        from api.routers.institution import get_pubmed_api_key
+        api_key = get_pubmed_api_key(db_for_key)
+    finally:
+        db_for_key.close()
+
+    max_workers = 8 if api_key else 3
+
     model_dir = os.path.join(
         os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
         "models", "wcm",
@@ -303,16 +343,18 @@ async def run_pipeline(
         "type": "started",
         "total": total,
         "mode": mode,
+        "run_id": run_id,
+        "max_workers": max_workers,
     }
 
     loop = asyncio.get_event_loop()
-    executor = ThreadPoolExecutor(max_workers=MAX_WORKERS)
+    executor = ThreadPoolExecutor(max_workers=max_workers)
 
     # Submit all tasks
     futures = {}
     for pid in person_ids:
         future = loop.run_in_executor(
-            executor, _process_one_researcher, pid, mode, config, model_dir
+            executor, _process_one_researcher, pid, mode, config, model_dir, run_id
         )
         futures[pid] = future
         yield {
@@ -320,14 +362,12 @@ async def run_pipeline(
             "person_id": pid,
         }
 
-    # Collect results as they complete
-    for pid in person_ids:
-        yield {
-            "type": "processing",
-            "person_id": pid,
-            "phase": "running",
-        }
-        result = await futures[pid]
+    # Collect results in completion order (per D-11)
+    # processing event removed per D-13
+    all_futures = list(futures.values())
+    for coro in _as_completed(all_futures):
+        result = await coro
+        pid = result["person_id"]  # already in result dict
         completed += 1
         yield {
             "type": "complete_one",
@@ -342,4 +382,5 @@ async def run_pipeline(
         "type": "finished",
         "completed": completed,
         "total": total,
+        "run_id": run_id,
     }

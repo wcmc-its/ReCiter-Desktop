@@ -70,6 +70,14 @@ def configure(req: ConfigureRequest, db: Session = Depends(get_db)):
     return {"status": "ok", "config_keys": list(config_pairs.keys())}
 
 
+def get_pubmed_api_key(db: Session) -> str:
+    """Get PubMed API key: config DB first, then env var fallback."""
+    row = db.query(Institution).filter_by(config_key="pubmed_api_key").first()
+    if row and row.config_value:
+        return row.config_value
+    return os.environ.get("PUBMED_API_KEY", "")
+
+
 @router.get("")
 def get_config(db: Session = Depends(get_db)):
     rows = db.query(Institution).all()

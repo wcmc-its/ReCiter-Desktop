@@ -32,6 +32,12 @@ export default function PipelinePage() {
   const hasExistingScores = researchers.some((r) => r.phase === "complete");
   const [showCompleted, setShowCompleted] = useState(false);
 
+  // Worker count and run tracking (per D-15)
+  // currentRunId stored for future historical run selector (phase 6)
+  const [maxWorkers, setMaxWorkers] = useState<number | null>(null);
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const [currentRunId, setCurrentRunId] = useState<number | null>(null);
+
   // Timing state
   const [startTime, setStartTime] = useState<number | null>(null);
   const [avgTimePerResearcher, setAvgTimePerResearcher] = useState<number>(0);
@@ -101,6 +107,8 @@ export default function PipelinePage() {
     setStartTime(Date.now());
     setAvgTimePerResearcher(0);
     setResearcherStartTimes({});
+    setMaxWorkers(null);
+    setCurrentRunId(null);
     const personIds = researchers.map((r) => r.personId);
     setTotal(personIds.length);
 
@@ -108,20 +116,16 @@ export default function PipelinePage() {
       "/api/pipeline/run",
       { person_ids: personIds, mode },
       (event) => {
-        if (event.type === "queued") {
-          setResearchers((prev) =>
-            prev.map((r) =>
-              r.personId === event.person_id ? { ...r, phase: "queued" } : r
-            )
-          );
-        } else if (event.type === "processing") {
+        if (event.type === "started") {
+          setMaxWorkers((event.max_workers as number) ?? null);
+          setCurrentRunId((event.run_id as number) ?? null);
+        } else if (event.type === "queued") {
           const pid = event.person_id as string;
+          // Record start time at queue point for bottleneck detection
           setResearcherStartTimes((prev) => ({ ...prev, [pid]: Date.now() }));
           setResearchers((prev) =>
             prev.map((r) =>
-              r.personId === pid
-                ? { ...r, phase: "retrieving" }
-                : r
+              r.personId === pid ? { ...r, phase: "queued" } : r
             )
           );
         } else if (event.type === "complete_one") {
@@ -287,23 +291,27 @@ export default function PipelinePage() {
               <span>
                 Elapsed: {formatDuration(Date.now() - startTime)}
               </span>
-              <span>
-                Est. remaining: {formatDuration(avgTimePerResearcher * (total - completed))}
-              </span>
+              <div className="flex gap-4">
+                {maxWorkers && (
+                  <span>Workers: <strong className="text-gray-600">
+                    {Math.min(total - completed, maxWorkers)}/{maxWorkers} active
+                  </strong></span>
+                )}
+                <span>
+                  Est. remaining: {formatDuration(avgTimePerResearcher * (total - completed))}
+                </span>
+              </div>
             </div>
           )}
         </div>
       )}
 
-      {/* Phase legend */}
+      {/* Phase legend — simplified to complete/queued/error (processing event removed per D-13) */}
       {(running || completed > 0) && (
         <div className="flex gap-4 mb-4 text-xs text-gray-500">
           <span><span className="text-green-600">{"\u25CF"}</span> Complete</span>
-          <span><span className="text-blue-600">{"\u25CF"}</span> Retrieving</span>
-          <span><span className="text-purple-600">{"\u25CF"}</span> Matching</span>
-          <span><span className="text-amber-600">{"\u25CF"}</span> Analyzing</span>
-          <span><span className="text-red-600">{"\u25CF"}</span> Scoring</span>
           <span><span className="text-gray-400">{"\u25CF"}</span> Queued</span>
+          <span><span className="text-red-500">{"\u25CF"}</span> Error</span>
         </div>
       )}
 

@@ -1,11 +1,12 @@
 import json
+from datetime import datetime
 from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from api.database import get_db
-from api.models import Identity
+from api.database import get_db, SessionLocal
+from api.models import Identity, PipelineRun
 from api.services.pipeline_runner import run_pipeline
 
 router = APIRouter(prefix="/api/pipeline", tags=["pipeline"])
@@ -27,8 +28,54 @@ async def run(req: PipelineRequest, db: Session = Depends(get_db)):
     if not person_ids:
         return {"error": "No researchers found"}
 
+    # Create pipeline_run row (PENDING) before streaming (per D-05)
+    pipeline_run = PipelineRun(
+        mode=req.mode,
+        status="PENDING",
+        total_researchers=len(person_ids),
+    )
+    db.add(pipeline_run)
+    db.commit()
+    db.refresh(pipeline_run)
+    run_id = pipeline_run.run_id
+
     async def event_stream():
-        async for event in run_pipeline(person_ids, mode=req.mode):
+        succeeded = 0
+        failed = 0
+        total_articles = 0
+        async for event in run_pipeline(person_ids, mode=req.mode, run_id=run_id):
+            # Track run status from events
+            if event.get("type") == "started":
+                # Transition to RUNNING (per D-05)
+                update_db = SessionLocal()
+                try:
+                    run_row = update_db.query(PipelineRun).filter_by(run_id=run_id).first()
+                    if run_row:
+                        run_row.status = "RUNNING"
+                        run_row.started_at = datetime.utcnow()
+                    update_db.commit()
+                finally:
+                    update_db.close()
+            elif event.get("type") == "complete_one":
+                if event.get("error"):
+                    failed += 1
+                else:
+                    succeeded += 1
+                    total_articles += event.get("article_count", 0)
+            elif event.get("type") == "finished":
+                # Transition to COMPLETED (per D-06)
+                update_db = SessionLocal()
+                try:
+                    run_row = update_db.query(PipelineRun).filter_by(run_id=run_id).first()
+                    if run_row:
+                        run_row.status = "COMPLETED"
+                        run_row.completed_at = datetime.utcnow()
+                        run_row.researchers_succeeded = succeeded
+                        run_row.researchers_failed = failed
+                        run_row.total_articles = total_articles
+                    update_db.commit()
+                finally:
+                    update_db.close()
             yield f"data: {json.dumps(event)}\n\n"
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
@@ -76,6 +123,10 @@ def status(db: Session = Depends(get_db)):
 
     assertion_count = get_assertion_count(db)
 
+    from api.models import RetrievalLog
+    last_retrieval = db.query(func.max(RetrievalLog.last_retrieval_date)).scalar()
+    last_retrieval_str = last_retrieval.isoformat() if last_retrieval else None
+
     return {
         "total_researchers": total_researchers,
         "total_articles": total_articles,
@@ -87,4 +138,5 @@ def status(db: Session = Depends(get_db)):
         "review_band": review_band,
         "unlikely": unlikely,
         "assertion_count": assertion_count,
+        "last_retrieval_date": last_retrieval_str,
     }
