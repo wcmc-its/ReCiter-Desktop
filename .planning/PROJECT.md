@@ -8,17 +8,16 @@ Standalone web application for author name disambiguation. Librarians and resear
 
 An institution can go from researcher list to scored publications in minutes, using the same production-validated models as Weill Cornell Medicine.
 
-## Current Milestone: v1.1 Statistics & Validation View
+## Current Milestone: v2.0 Pipeline Parity & Performance
 
-**Goal:** Show pipeline scoring quality after a run using gold standard assertions, benchmarked against WCM and Fred Hutch.
+**Goal:** Make ReCiter Desktop's retrieval and scoring pipeline match ReCiter's exact behavior, suitable for validating accuracy claims in the paper.
 
 **Target features:**
-- Post-pipeline stats page (gated: only shown when assertions were imported)
-- ROC curve with AUC + WCM/Fred Hutch reference lines
-- Calibration plot (reliability diagram) + reference lines
-- Score distribution histogram colored by assertion outcome
-- Precision-recall curve + reference lines
-- Strongest Disagreements: top 5 inline table + "View all" link to filtered Results
+- Retrieval Strategy Parity: strict/relaxed PubMed search, esearch count check, affiliation filtering, compound name handling
+- Parallel Researcher Processing: dynamic MAX_WORKERS, asyncio.as_completed, concurrent pipeline UI
+- Historical Pipeline Runs: run table with run_id, run selector on Results/Stats, comparison view
+- Results Page Refinement: search/filter, per-researcher export, source labeling
+- UI Polish: institution name display, last run type, reconnection, dashboard metrics
 
 ## Requirements
 
@@ -32,25 +31,21 @@ An institution can go from researcher list to scored publications in minutes, us
 - ✓ CSV export of all scored results — v1.0
 - ✓ Sidebar navigation with prerequisite gates and status indicators — v1.0
 - ✓ Incremental pipeline (only re-scores new articles on subsequent runs) — v1.0
+- ✓ Backend stats endpoint: ROC/AUC with bootstrap CI, calibration, PR curve, score distribution, disagreements — v1.1
+- ✓ Stats page frontend: 4 charts (ROC, calibration, score distribution, precision-recall), metric cards, disagreements table — v1.1
+- ✓ Stats workflow wiring: sidebar entry with prerequisite gate, pipeline completion CTA — v1.1
 
 ### Active
 
-- [ ] Post-pipeline statistics page with AUC, calibration, score distribution, precision-recall
-- [ ] Benchmark reference lines from WCM and Fred Hutch overlaid on charts
-- [ ] Strongest Disagreements section: top 5 inline + link to filtered Results page
-
-### Validated in Phase 1: Backend Stats Endpoint
-
-- ✓ `GET /api/stats` endpoint computes ROC/AUC + 95% bootstrap CI (1000 resamples) — STATS-01
-- ✓ Calibration: exactly 10 fixed bins via `np.digitize`, n-per-bin counts — STATS-02
-- ✓ PR curve: baseline = actual positive rate (not 0.5) — STATS-03
-- ✓ Score distribution: 10-bucket histogram split by ACCEPTED/REJECTED — STATS-04
-- ✓ Strongest disagreements: ranked by |score − assertion_value| — STATS-05
-- ✓ Viability flags: gate output when n=0, single-class, or n<50 — STATS-06
+- [ ] Retrieval strategy parity with ReCiter: strict/relaxed search, esearch count, affiliation filtering, compound names
+- [ ] Parallel researcher processing: dynamic workers, asyncio.as_completed, concurrent pipeline UI
+- [ ] Historical pipeline runs: run table, run selector, comparison view
+- [ ] Results page refinement: search/filter, per-researcher export, source labeling
+- [ ] UI polish: institution name display, last run type, reconnection, dashboard metrics
 
 ### Out of Scope
 
-- Per-researcher stats drill-down — aggregate across run is sufficient for v1.1
+- Per-researcher stats drill-down — aggregate across run is sufficient
 - Real-time calibration updates during pipeline run — stats are post-hoc
 - Custom benchmark upload — WCM/Fred Hutch are the reference institutions
 
@@ -99,4 +94,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-04-04 — Phase 1 complete: `/api/stats` endpoint live*
+*Last updated: 2026-04-05 after milestone v2.0 started*
