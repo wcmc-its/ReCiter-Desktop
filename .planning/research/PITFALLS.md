@@ -1,147 +1,226 @@
 # Pitfalls Research
 
-**Domain:** ML validation statistics added to an existing disambiguation scoring app (Next.js + FastAPI + XGBoost)
-**Researched:** 2026-04-04
-**Confidence:** HIGH for statistical pitfalls; HIGH for Next.js/Recharts pitfalls; MEDIUM for benchmark comparison pitfalls (domain-specific, less literature)
+**Domain:** Adding retrieval parity, parallelism, and historical versioning to an existing PubMed + ML scoring pipeline (Next.js + FastAPI + MariaDB)
+**Researched:** 2026-04-05
+**Confidence:** HIGH — based on direct code inspection of `core/pubmed.py`, `api/services/pipeline_runner.py`, `api/schema.sql`, `api/models.py`, project memory files, the historical-pipeline-runs feature doc, and prior stats pitfalls research
 
 ---
 
 ## Critical Pitfalls
 
-### Pitfall 1: Calibration Plot Rendered with Too Few Samples per Bin
+### Pitfall 1: `retrieval_log` Table Exists in ORM but Was Missing from `schema.sql`
 
 **What goes wrong:**
-With fewer than ~50–100 curated assertions total, equal-width binning produces bins containing 0–3 samples each. The plotted calibration curve is dominated by noise: sharp spikes, empty bins, and zigzag patterns that look like model miscalibration but are pure sampling artifact. A user with 40 accepted/rejected assertions using 10 bins gets an average of 4 data points per bin — statistically meaningless. The plot visually implies the model is badly calibrated at WCM when it simply has no data.
+Fresh Docker Compose installs — new users, CI environments, paper reproducibility runs — build the DB from `schema.sql`. The `RetrievalLog` SQLAlchemy model exists in `api/models.py` but the matching `CREATE TABLE` was never back-ported to `schema.sql`. SQLAlchemy does not fail at startup; it fails the first time `_process_one_researcher` reaches line 115 (`db.query(RetrievalLog).filter_by(person_id=person_id).first()`), raising `ProgrammingError: Table 'reciter_desktop.retrieval_log' doesn't exist`. The pipeline SSE stream emits an error event for every researcher and terminates. Users see a silent failure with no actionable message.
+
+**Note:** `schema.sql` was verified to already contain `CREATE TABLE IF NOT EXISTS retrieval_log` as of 2026-04-05. However, project memory (`project_state.md` item #5) recorded this as a known gap, meaning it may have been added to the main branch but not to worktree or branch copies. Verify the current branch has the table before proceeding.
 
 **Why it happens:**
-Calibration plots are imported from ML notebooks where 10,000+ samples are assumed. The code works; the output is misleading. Developers render it without validating n-per-bin.
+The ORM model was added during active development against an already-running database. The `schema.sql` DDL was not updated at the same time. The dev environment masked the bug because the DB already had the table.
 
 **How to avoid:**
-- Compute n-per-bin before rendering. If any bin has fewer than 10 samples, fall back to a simpler display: show a single Brier score and a plain-text note ("Not enough assertions for a calibration plot. Need at least 100 across the score range").
-- Use quantile binning (equal-count) instead of equal-width binning when n < 500. Quantile binning guarantees every bin has observations.
-- Display per-bin sample count as a bar chart below the calibration line (the "rug" pattern used by scikit-learn's CalibrationDisplay). This makes sparse bins visually obvious.
-- Set a hard gate: render the calibration plot only when n_assertions >= 50. Below that, show a sample-size warning instead of an unreliable chart.
+Add a pre-flight check: every class in `api/models.py` inheriting from `Base` must have a matching `CREATE TABLE IF NOT EXISTS` in `schema.sql`. Run `docker compose down -v && docker compose up` and attempt a pipeline run as the literal first test of every phase. Treat schema/ORM drift as a blocking issue.
 
 **Warning signs:**
-- Calibration curve endpoint has only 1–2 samples in the highest-score bin (near 100).
-- Plot is jagged rather than smooth or monotone.
-- Any bin with zero samples appears as a gap in the line.
+- Pipeline SSE stream emits `error` events for all researchers simultaneously
+- Error message contains `doesn't exist` or `no such table`
+- Fresh `docker compose` install fails on first pipeline run but existing dev environments work
 
-**Phase to address:** The phase that builds the Statistics page (v1.1 backend + frontend). Gate logic must be computed server-side, not client-side.
+**Phase to address:**
+Phase 1 (Parallel Processing) — verify before any other Phase 1 work. Parallel workers will all hit the same missing table simultaneously, producing confusing interleaved error events.
 
 ---
 
-### Pitfall 2: ROC AUC Compared to WCM 0.9993 Without Sample Size Context
+### Pitfall 2: `run_pipeline` Awaits Results in Submission Order, Negating Parallel Execution in the UI
 
 **What goes wrong:**
-WCM's feedback model AUC was computed on ~900,000 curated pairs. A user institution with 100–500 assertions will compute an AUC with very wide confidence intervals — the 95% CI for AUC from 150 balanced pairs spans roughly ±0.05. Displaying their AUC as 0.94 next to WCM's 0.9993 implies the user's model is measurably worse. In reality, their AUC is statistically indistinguishable from 0.9993. Worse: if the 100 assertions are heavily imbalanced (90 accepted, 10 rejected), the AUC estimate itself is unreliable because a few wrong predictions swing the curve significantly.
+All researchers are submitted to the `ThreadPoolExecutor` concurrently (correct), but the SSE event loop then iterates `for pid in person_ids` and does `result = await futures[pid]` — blocking on the first researcher until they finish before yielding the second `processing` event. Researcher #3 may finish in 2 seconds but the UI does not acknowledge their completion until researchers #1 and #2 have also finished. The pipeline wall-clock time is correct (parallel), but the progress display is serial. Users see one "Active" researcher at a time and perceive no speedup.
 
 **Why it happens:**
-AUC is displayed as a point estimate. Confidence intervals are not shown. WCM's benchmark number looks precise and authoritative. Users (librarians, not statisticians) will read a gap as a real gap.
+The futures dict is keyed to submission order and awaited in that order. The code looks parallel (thread pool submission), but the `async for` generator serializes result collection. `asyncio.as_completed` is the correct fix and is explicitly named in the Phase 1 milestone goals, but the current code predates it.
 
 **How to avoid:**
-- Always show AUC with a 95% bootstrap confidence interval (1000 bootstrap samples, easy with `sklearn.utils.resample` or `scipy.stats.bootstrap`).
-- Display the sample size (n_assertions) prominently next to the AUC. "AUC: 0.941 (95% CI: 0.882–0.991, n=120)" communicates uncertainty correctly.
-- Add a contextual note: "WCM benchmark computed on 900K pairs. Your result is based on N pairs; overlapping confidence intervals mean performance may be equivalent."
-- Consider graying out or disabling the WCM reference line if the user's n < 200, replacing it with a note rather than a visual comparison that implies precision.
+Replace the ordered await loop with `asyncio.as_completed`. Collect all futures as a list and iterate:
+```python
+all_futures = [futures[pid] for pid in person_ids]
+for coro in asyncio.as_completed(all_futures):
+    result = await coro
+    completed += 1
+    yield {"type": "complete_one", "person_id": result["person_id"], ...}
+```
+Note: `asyncio.as_completed` returns coroutines in completion order, so `result["person_id"]` must come from the result dict, not from the loop index.
 
 **Warning signs:**
-- AUC displayed without CI.
-- n_assertions < 200 but benchmark comparison reference lines shown as authoritative.
-- All assertions are the same label (all accepted = AUC is undefined/degenerate).
+- Pipeline UI only shows one researcher as "Active" at a time even when `MAX_WORKERS >= 4`
+- Adding timing logs shows all `_process_one_researcher` calls start within milliseconds of each other but SSE events arrive one at a time
+- Removing the thread pool entirely produces identical perceived behavior
 
-**Phase to address:** Statistics API endpoint (FastAPI) — CIs must be computed server-side and returned alongside point estimates.
+**Phase to address:**
+Phase 1 (Parallel Processing) — this is the primary deliverable.
 
 ---
 
-### Pitfall 3: PR Curve Baseline Not Anchored to Local Positive Rate
+### Pitfall 3: Adding `run_id` to `person_article_score` Requires a Single Atomic `ALTER TABLE` — Multi-Step Migrations Break the PK
 
 **What goes wrong:**
-The precision-recall curve's random-classifier baseline is not 0.5 (like ROC) — it equals the positive rate (prevalence) of assertions in the data. If 80% of a user's imported assertions are ACCEPTED, the baseline PR-AUC is 0.80, not 0.5. Showing WCM's PR-AUC benchmark without knowing WCM's positive rate makes comparison meaningless. A user institution with 90% ACCEPTED assertions (highly biased toward acceptance, common in "we're validating our own researchers" workflows) will see a naturally high PR-AUC even with a mediocre model.
+The current primary key on `person_article_score` is `(person_id, pmid, model_type)`. Adding `run_id` as a fourth PK component requires: adding the column, migrating existing rows to `run_id = 1`, and redefining the PK. If these are done as separate `ALTER TABLE` statements, the table has no PK between the `DROP PRIMARY KEY` and `ADD PRIMARY KEY` steps — a window where concurrent reads/writes during a live migration can produce inconsistent data. Additionally, `ADD COLUMN run_id INT NOT NULL` on a non-empty table fails in strict SQL mode without a DEFAULT.
 
 **Why it happens:**
-PR curves are borrowed from class-balanced evaluation contexts. The prevalence-dependency of PR-AUC is not widely known outside ML practitioners. The WCM and Fred Hutch benchmarks were computed on large, balanced datasets; a small institution's data is rarely balanced.
+Developers write migrations as sequential `ALTER TABLE` calls, one concern per statement. MariaDB allows combining multiple `ALTER TABLE` clauses in a single statement, which is the safe approach, but it requires careful syntax and is often missed.
 
 **How to avoid:**
-- Always display the "no-skill" baseline on the PR curve as a horizontal line at y = positive_rate (not 0.5).
-- Show the positive rate (% accepted) as a labelled stat near the chart.
-- Compute and display normalized lift: (AUPRC - baseline) / (1 - baseline). This makes cross-institution comparison valid regardless of class balance.
-- In the benchmark overlay label, add the WCM positive rate if known, or note that direct comparison is approximate.
+Write the entire migration as a single `ALTER TABLE` statement:
+```sql
+ALTER TABLE person_article_score
+  ADD COLUMN run_id INT NOT NULL DEFAULT 1 AFTER model_type,
+  DROP PRIMARY KEY,
+  ADD PRIMARY KEY (person_id, pmid, model_type, run_id),
+  ADD CONSTRAINT fk_pas_run FOREIGN KEY (run_id) REFERENCES pipeline_run(run_id);
+```
+`pipeline_run` must be created and have a row with `run_id = 1` inserted before this statement runs (FK target must exist). Test the full migration on a populated copy of the DB (not an empty test instance) before applying.
 
 **Warning signs:**
-- PR curve shows very high AUPRC (>0.95) but the model's calibration is poor — check positive rate; may be baseline effect.
-- Benchmark reference line shown without corresponding prevalence note.
+- Migration script has separate `ALTER TABLE ... DROP PRIMARY KEY` and `ALTER TABLE ... ADD PRIMARY KEY` statements
+- No `pipeline_run` row 1 inserted before the FK is added
+- Migration runs only against empty test DB, not against populated dev DB
 
-**Phase to address:** Same as Pitfall 2 — Statistics API endpoint and chart labeling.
+**Phase to address:**
+Phase 3 (Historical Pipeline Runs) — write and test the migration as the absolute first task of this phase before any application code changes.
 
 ---
 
-### Pitfall 4: Recharts SSR Hydration Error Breaks the Entire Stats Page
+### Pitfall 4: `update` Mode `mindate` Is Silently Corrupted by Any Write to `retrieval_log`
 
 **What goes wrong:**
-Recharts uses browser-only APIs (ResizeObserver, DOM dimension queries) and d3 internals that cannot run in Node.js during server-side rendering. In Next.js 14 App Router, any component that imports Recharts without `"use client"` will throw a server-render error. Even with `"use client"`, the initial server HTML (empty SVG containers) differs from client-rendered SVGs, causing React hydration mismatch warnings. In some Recharts versions (2.1.13+), a CommonJS/ESM conflict with d3-shape causes a hard server crash (`require() of ES Module not supported`).
+`RetrievalLog.last_retrieval_date` has `onupdate=func.now()` in the ORM and `ON UPDATE CURRENT_TIMESTAMP` in the schema DDL. Any `UPDATE` statement touching the `retrieval_log` row — including updating `articles_found` at the end of a score-only run — advances `last_retrieval_date` to now. A subsequent `update` mode run uses this corrupted timestamp as `mindate`, missing all articles published since the last *full retrieval* but before the incidental write. The researcher appears up-to-date but their article set is stale.
 
 **Why it happens:**
-The project currently has zero charting libraries installed (confirmed in package.json). The first developer to add Recharts will follow generic tutorials that don't account for the SSR context. App Router components default to Server Components; forgetting `"use client"` is a common first mistake.
+`ON UPDATE CURRENT_TIMESTAMP` fires on any `UPDATE` to the row, not just intentional timestamp sets. The pipeline runner updates `retrieval_log.articles_found` at line 180 in both `full` and `update` modes, which silently triggers the timestamp update.
 
 **How to avoid:**
-- Add `"use client"` to every file that imports Recharts — not just to a wrapper but to the chart files themselves.
-- Wrap the chart container component with `next/dynamic` and `{ ssr: false }` as a belt-and-suspenders approach, especially if the component tree is complex: `const StatsCharts = dynamic(() => import("@/components/stats-charts"), { ssr: false })`.
-- Use shadcn/ui's chart component (`npx shadcn@latest add chart`) which ships pre-wired for Recharts v3 with correct `"use client"` placement and avoids the d3-shape ESM conflict. This is the lowest-risk path given shadcn is already in the project.
-- Pin Recharts version (no caret) in package.json to prevent silent upgrades that re-introduce the ESM conflict.
+Either (a) add a separate `last_full_retrieval_date` column that is explicitly set only when a `full` or `update` retrieval run completes, or (b) remove `onupdate` from the ORM definition entirely and set the timestamp with an explicit `retrieval_log.last_retrieval_date = datetime.utcnow()` only in the retrieval branch. Score-only runs must not touch the `retrieval_log` table at all.
 
 **Warning signs:**
-- Browser console: "Hydration failed because the server rendered HTML didn't match the client."
-- Server log: "require() of ES Module ... not supported."
-- Charts render blank (zero-height SVG) on first load but appear on refresh.
+- `update` mode runs after score-only runs retrieve far fewer articles than expected
+- `retrieval_log.last_retrieval_date` advances even when the pipeline is run in `score_only` mode
+- Researchers added recently are absent from `update` mode results
 
-**Phase to address:** Stats page frontend build phase — must be caught in the initial chart integration, not after the full page is built.
+**Phase to address:**
+Phase 2 (Retrieval Strategy Parity) — `update` mode is listed as "wired but untested end-to-end." Fixing the timestamp semantics must be part of the end-to-end test.
 
 ---
 
-### Pitfall 5: Disagreements Section Surfaces Alarming Cases That Are Actually Correct
+### Pitfall 5: Compound and Non-ASCII Last Names Break PubMed Query Construction Silently
 
 **What goes wrong:**
-"Strongest Disagreements" is defined as articles where the model scored high but the user rejected, or scored low but the user accepted. These are presented ranked by score-assertion gap. However, many of the top disagreements will not be model errors — they are legitimate edge cases: a researcher published under a different name variant, co-authored with a famous homonym, or the institution's imported assertions contain a data entry mistake. Displaying them without context as "the model got these wrong" trains users to distrust the model unfairly and generates support requests.
+`_build_author_term` in `core/pubmed.py` quotes the author term only when `" " in last_name or "-" in last_name`. PubMed E-utilities treats other characters as special: apostrophes (`O'Brien`), brackets, and names with Unicode diacritics that PubMed normalizes to ASCII (`López` → `Lopez`). An unquoted `O'Brien B[au]` will fail silently — PubMed may return 0 results or misparse the query. The pipeline logs `lenient_count = 0` and records the researcher as "no articles found" rather than "query error," making the bug invisible without a known-answer validation set.
 
 **Why it happens:**
-Disagreement analysis in research contexts assumes ground truth is reliable. In practice, imported assertions (curations) from prior systems are noisy — they often include bulk-imported decisions, not human-reviewed ones. The top disagreements by score gap are often the most ambiguous cases, not systematic model failures.
+The quoting condition was written for the most common cases (hyphenated, two-word surnames). Apostrophes and diacritics were not encountered in the initial dev dataset (Fred Hutch, WCM).
 
 **How to avoid:**
-- Label the section "Strongest Score-Assertion Disagreements" not "Model Errors."
-- Add a one-sentence explanation in the UI: "These are articles where the score and your assertion differ most. Review them — some may be data entry issues; others may reveal edge cases worth investigating."
-- Show the model's feature evidence (top 3 features) inline in the table for each disagreement so users can evaluate the reason.
-- Limit the inline table to 5 rows — enough to be actionable, not enough to overwhelm.
-- Do not present disagreement count as a "model accuracy" metric. It conflates assertion quality with model quality.
+Broaden the quoting condition to always quote when the name contains any character outside `[A-Za-z]`:
+```python
+import re
+needs_quoting = bool(re.search(r"[^A-Za-z ]", last_name)) or " " in last_name
+```
+Add a normalization step using `unicodedata.normalize('NFD', name).encode('ascii', 'ignore').decode()` to strip diacritics before building the query — matching PubMed's own normalization. Add unit tests covering `O'Brien`, `van der Berg`, `López`, `Müller`, and `St. John`.
 
 **Warning signs:**
-- Top disagreement is a researcher with a very common name (John Lee, Wei Zhang) — expected disagreements, not model errors.
-- More than 30% of top disagreements are ACCEPTED articles scored low — suggests assertions were bulk-imported at a liberal threshold.
+- Researchers with `'` in their last name return `lenient_count = 0` despite known publications
+- No unit tests for `_build_author_term` with non-ASCII or punctuated names
+- Paper validation set includes any WCM/Cornell researchers with hyphenated or non-ASCII names
 
-**Phase to address:** The Disagreements section build phase — labeling and context copy must be written before UI review, not after.
+**Phase to address:**
+Phase 2 (Retrieval Strategy Parity) — directly affects paper validation correctness.
 
 ---
 
-### Pitfall 6: Gating Logic Checks Wrong Condition
+### Pitfall 6: Global `_TokenBucket` Is Thread-Safe but Not Process-Safe
 
 **What goes wrong:**
-The stats page gate should show stats only when curations/assertions exist. A naive implementation checks `curation_count > 0`. But this misses the join: stats require scored articles that also have an assertion. A user can import 500 assertions for researchers not yet run through the pipeline (no scores), or run the pipeline before importing assertions (scores exist, but no curations joined to scores). The API endpoint crashes or returns degenerate metrics (AUC = NaN, empty curves) when `JOIN(person_article_score, curations) = 0 rows` even though `curation_count > 0`.
+`core/pubmed.py` uses a module-level `_bucket = _TokenBucket(rate=2.5)` with a `threading.Lock`. This correctly rate-limits concurrent threads within a single Python process. If the application is started with multiple Uvicorn workers (`--workers N`), each process has its own `_bucket`. With 4 workers × 4 threads, 16 concurrent PubMed requests can be made against a 3 req/sec NCBI limit. NCBI returns HTTP 429, which the current `except requests.RequestException` block swallows with `continue` — silently dropping article batches with no user notification.
 
 **Why it happens:**
-The gate logic and the stats computation logic are written independently. The frontend gate talks to the workflow state API; the stats API endpoint assumes data is already valid. Neither checks the intersection.
+The bucket was designed for single-process operation, which is correct for the current Docker Compose setup. The pitfall is triggered if someone scales workers during performance investigation, or if `--workers 4` is added to the Dockerfile as a "performance improvement."
 
 **How to avoid:**
-- The stats API endpoint must return a `{ viable: bool, n_scored_with_assertions: int }` field regardless of whether other stats are requested.
-- Gate the stats page (both sidebar visibility and page content) on `n_scored_with_assertions >= 1`, not just `curation_count > 0`.
-- Add progressive disclosure: sidebar shows "Statistics (run pipeline to activate)" when assertions exist but no scores are joined.
-- Compute and return the minimum viable n in the API: `SELECT COUNT(*) FROM person_article_score ps JOIN curations c ON ps.person_id = c.person_id AND ps.pmid = c.pmid`.
+Add an explicit comment to `api/main.py` and the Dockerfile that `--workers 1` is required for PubMed rate limiting. Do not use `--workers N > 1` without replacing the in-process token bucket with a Redis-backed shared rate limiter. The current `MAX_WORKERS` in `pipeline_runner.py` controls *threads*, not processes, and is safe.
 
 **Warning signs:**
-- AUC or AUPRC returns NaN or 0.0.
-- ROC curve shows a single point rather than a curve.
-- Stats page is shown in sidebar but API returns 500 on first load.
+- Uvicorn started with `--workers 4` in `docker-compose.yml` or `Dockerfile`
+- HTTP 429 responses appearing as `efetch failed` in logs
+- Fetched article count systematically lower than `esearch_count` predicted
 
-**Phase to address:** The Statistics API endpoint build phase — data validation before computation.
+**Phase to address:**
+Phase 1 (Parallel Processing) — document the constraint as a comment when `MAX_WORKERS` is increased.
+
+---
+
+### Pitfall 7: Concurrent DB Sessions Hold Connections Open for the Full Pipeline Duration
+
+**What goes wrong:**
+`_process_one_researcher` opens `db = SessionLocal()` at line 99 and holds the connection open through the entire retrieval + scoring pipeline — potentially 60+ seconds per researcher for large sets. With `MAX_WORKERS = 8` (Phase 1 goal for API-key users) plus FastAPI request handler connections, this approaches or exceeds SQLAlchemy's default pool (`pool_size=5`, `max_overflow=10`) under load. New requests block waiting for a connection.
+
+**Why it happens:**
+A single session for the full pipeline duration is the simplest pattern. The resource cost is invisible at 4 workers but becomes apparent at 8.
+
+**How to avoid:**
+Set pool parameters in `api/database.py` to match the expected `MAX_WORKERS`:
+```python
+engine = create_engine(DATABASE_URL, pool_pre_ping=True, pool_size=MAX_WORKERS + 4, max_overflow=4)
+```
+Alternatively, shorten the session lifetime: close the session after the retrieval phase commits, then open a new session for the scoring phase. This releases connections back to the pool between the two most time-consuming phases.
+
+**Warning signs:**
+- `QueuePool limit of size X overflow Y reached` in FastAPI logs
+- Pipeline stalls silently after a few researchers complete
+- DB connection errors only manifest at high researcher counts (>10)
+
+**Phase to address:**
+Phase 1 (Parallel Processing) — connection pool sizing must be addressed alongside `MAX_WORKERS` changes.
+
+---
+
+### Pitfall 8: SSE Stream Has No Reconnect Semantics — Pipeline State Is Lost on Page Reload
+
+**What goes wrong:**
+The SSE `event_stream` generator in `pipeline.py` starts fresh on each POST to `/api/pipeline/run`. If the browser tab reloads or the SSE connection drops, the client receives no in-progress events and has no way to recover the run state. The pipeline continues in the backend but the frontend shows a stale "not running" state. The milestone doc explicitly flags "reconnection polling — verify it correctly detects completion for all edge cases" as an open gap.
+
+**Why it happens:**
+SSE generators are one-shot. Without a persistent run record, there is nothing to reconnect to.
+
+**How to avoid:**
+Phase 3's `pipeline_run` table provides the persistent state. A reconnecting client should poll `/api/runs/latest` to check if `status = "running"` or `"complete"`, then reconstruct the UI from the run record rather than re-subscribing to a new SSE stream. The SSE stream itself is ephemeral; the run record is the source of truth.
+
+**Warning signs:**
+- No `pipeline_run` table exists (Phase 3 prerequisite)
+- Frontend has no logic to check for an in-progress run on mount
+- Page reload during a pipeline run shows "no runs yet" state
+
+**Phase to address:**
+Phase 3 (Historical Pipeline Runs) — reconnect recovery depends on `pipeline_run` existing. Phase 5 polish (reconnection) is blocked on Phase 3.
+
+---
+
+### Pitfall 9: `retrieve_known` Mode May Score from Stale DB Metadata Instead of Fetching Fresh PubMed XML
+
+**What goes wrong:**
+The milestone doc flags: "Verify `retrieve_known` mode fetches PubMed XML for uploaded PMIDs before scoring (currently maps to `score_only` which may skip metadata fetch)." If PMIDs are uploaded but their `article` rows don't exist in the DB yet, `score_only` mode will query `db.query(Article).filter(Article.pmid.in_(pmids)).all()` and get an empty list, resulting in zero scored articles with no error. The user sees `article_count = 0, scored_count = 0` and assumes the pipeline ran successfully.
+
+**Why it happens:**
+`score_only` mode was designed for the case where articles are already in the DB (from a prior full run). The PMID-upload workflow adds `person_article` rows but may not populate the `article` table.
+
+**How to avoid:**
+After a PMID upload, check whether each uploaded PMID has a corresponding `article` row. If not, fetch the missing articles from PubMed before scoring. Add a specific mode flag (`retrieve_known`) distinct from `score_only` that guarantees a PubMed fetch step for any PMID missing from the `article` table.
+
+**Warning signs:**
+- PMID upload followed by pipeline run returns `scored_count = 0` for all researchers
+- `article` table is empty after PMID upload
+- No PubMed fetch log lines when `score_only` is used with freshly uploaded PMIDs
+
+**Phase to address:**
+Phase 2 (Retrieval Strategy Parity) — listed explicitly in the milestone doc.
 
 ---
 
@@ -149,12 +228,11 @@ The gate logic and the stats computation logic are written independently. The fr
 
 | Shortcut | Immediate Benefit | Long-term Cost | When Acceptable |
 |----------|-------------------|----------------|-----------------|
-| Show AUC as point estimate only | Simpler UI, faster build | Users misread small gaps vs. WCM benchmark as significant | Never — add CI from the start |
-| Equal-width bins regardless of n | One code path | Misleading calibration plots with small n | Never — implement n-check on first build |
-| Compute stats on frontend from raw score data | No new API endpoint | Exposes all raw scores in browser, computation fails for large datasets | Never — compute server-side |
-| Use `suppressHydrationWarning` to silence chart errors | Silences console noise | Masks real rendering failures, charts may be blank | Never — fix the SSR boundary properly |
-| Skip WCM reference lines until later | Faster MVP | Reference lines are the whole point of the page; hard to add retroactively once charts are styled | Acceptable for a first internal build, not acceptable for user-facing release |
-| Show disagreements without explanation copy | Saves writing effort | Users will interpret disagreements as pure model errors and file support tickets | Never — write the copy on first build |
+| No migration framework (raw SQL in `schema.sql`) | Less setup, no Alembic dependency | Schema drift between ORM and DDL is undetectable; each change requires manual cross-check | Acceptable for MVP; add Alembic before Phase 3 migration lands |
+| Swallowing PubMed errors with bare `continue` in `fetch_articles` | Pipeline does not abort on transient errors | Silently returns fewer articles than expected; user has no indication batches were dropped | Replace with retry + final error count reported in SSE events |
+| Global `_model_cache` dict in `scoring.py` with no lock | Avoids repeated disk reads | Two threads may simultaneously load and write the cache on cold start (last write wins — benign but wasteful) | Add a `threading.Lock` around cache miss handling in Phase 1 |
+| `ON UPDATE CURRENT_TIMESTAMP` for `last_retrieval_date` | No application code needed to track last write time | Corrupts the `mindate` used by `update` mode whenever any write touches the row | Never for retrieval-tracking columns — set timestamp explicitly |
+| Awaiting futures in submission order | Simple code | Negates the user-visible benefit of parallelism; progress display is serial | Never — fix with `asyncio.as_completed` |
 
 ---
 
@@ -162,10 +240,12 @@ The gate logic and the stats computation logic are written independently. The fr
 
 | Integration | Common Mistake | Correct Approach |
 |-------------|----------------|------------------|
-| FastAPI → Next.js stats endpoint | Returning raw sklearn metric objects (dict with numpy types) causes JSON serialization error | Explicitly cast numpy float64/int64 to Python float/int before returning; use `float(auc_score)` not `auc_score` |
-| MariaDB → Python stats computation | Loading all `person_article_score` rows into pandas for AUC computation at 100K rows causes memory spike | Use SQL aggregation for histograms; load only the joined (scored + asserted) rows for metric computation |
-| Recharts + shadcn/ui existing install | Adding shadcn chart component to a project that already has `shadcn` in package.json may conflict | Run `npx shadcn@latest add chart` — shadcn chart is an add-on that brings Recharts; don't install Recharts separately |
-| sklearn `roc_auc_score` with single-class assertions | Throws `ValueError: Only one class present in y_true` if all assertions are ACCEPTED or all REJECTED | Wrap in try/except, return `{ viable: false, reason: "need_both_classes" }` before attempting computation |
+| PubMed E-utilities rate limiting | Using the published rate (3/sec, 10/sec) as the exact target | Stay slightly below: 2.5/sec without key, 9/sec with key. NCBI enforces at the burst level; hitting exactly 3/sec under concurrent requests triggers 429s |
+| PubMed `esearch` with `rettype=count` | Assuming `<Count>` is always present and numeric | It is absent when the query syntax is invalid; `esearch_count()` returns 0 silently — add a query-validity log warning when count is 0 for a researcher with known publications |
+| PubMed PDAT date filter | Using ISO 8601 format (`2025-01-15`) | PubMed requires `YYYY/MM/DD`: `("2025/01/15"[PDAT] : "3000"[PDAT])`. Current `strftime("%Y/%m/%d")` is correct but fragile — add a format assertion in tests |
+| MariaDB JSON column reads | Assuming JSON columns always return Python dicts | PyMySQL returns JSON as dicts in MariaDB 10.5+ but as strings in some driver/version combinations. `_db_article_to_core` handles the dict case; add a `json.loads` fallback for string values |
+| SSE and FastAPI `StreamingResponse` | Assuming stream is immediately flushed | Uvicorn may buffer SSE events unless `Cache-Control: no-cache` and `X-Accel-Buffering: no` headers are set. Missing headers cause clients to receive all events at once on connection close |
+| `asyncio.as_completed` with `run_in_executor` results | Assuming result dict contains `person_id` in correct order | With `as_completed`, completion order is non-deterministic. Always extract `person_id` from `result["person_id"]`, not from a parallel index variable |
 
 ---
 
@@ -173,33 +253,23 @@ The gate logic and the stats computation logic are written independently. The fr
 
 | Trap | Symptoms | Prevention | When It Breaks |
 |------|----------|------------|----------------|
-| Computing bootstrap CIs synchronously in the HTTP request | Stats endpoint times out after 30s; request fails | Precompute stats after each pipeline run and cache in DB table; return cached values | At n_assertions >= 500, 1000 bootstraps takes 2–5s; at 5000 it takes 20–40s |
-| Loading full score distribution for histogram in browser | Slow page load, large JSON payload for 50K rows | Return pre-aggregated histogram bins from API (array of `{ bin_start, bin_end, count, assertion_count }`) | At 10K+ scored articles the raw payload exceeds 1MB |
-| Re-rendering all 4 charts on every page focus/tab switch | Charts flash and recalculate needlessly | Fetch stats once on mount; cache in component state or React Query; do not re-fetch on window focus | Not a scale issue — noticeable from the first use |
-
----
-
-## UX Pitfalls
-
-| Pitfall | User Impact | Better Approach |
-|---------|-------------|-----------------|
-| Showing ROC, PR, calibration, and score distribution all on one page without tabs or sections | Page is overwhelming; users don't know what to look at first | Use a clear section hierarchy: (1) Summary metrics card at top, (2) Score Distribution, (3) expandable advanced charts (ROC, PR, calibration) |
-| WCM benchmark line with no explanation | "Why is my model being compared to a hospital?" Users don't know WCM trained the model | Add a one-line tooltip or footnote: "WCM trained the original model on 900K pairs. This line shows their measured performance as a reference." |
-| Displaying AUC=1.0 or AUC=NaN without explanation | Looks like a bug or a perfect model; users assume it means the model is broken | Detect and display a specific message: "All assertions are the same label — cannot compute AUC. Add both accepted and rejected assertions." |
-| Disagreements table shows only PMID and score delta | Users have no context to act | Show: researcher name, article title, assertion label, model score, and a link to that article in the Results page |
+| Loading full `Article` rows for all researchers' PMIDs | `db.query(Article).filter(Article.pmid.in_(pmids)).all()` fetches abstracts, full JSON fields for every article | Use `.with_entities()` to select only the columns needed for feature generation | Breaks at ~1,000 articles per researcher; Fred Hutch full dataset (28k articles) hits this in batch mode |
+| No index on `(person_id, run_id)` after adding `run_id` column | Queries filtering scores by researcher + run perform full table scans | Add composite index at migration time: `CREATE INDEX idx_pas_run ON person_article_score (person_id, run_id)` | Degrades immediately once run history accumulates; worst at 10+ runs |
+| `MAX_WORKERS` set equal to CPU count for an I/O-bound workload | Workers idle on PubMed API waits; rate limit headroom unused | For API-key users: `MAX_WORKERS = 8`; without key: `min(4, int(rate_limit / 1.5))` | Under-provisioned from day one with the current `min(4, cpu_count())` formula |
+| Pre-computing stats synchronously in the pipeline SSE path | Stats endpoint times out; pipeline SSE blocks on stat computation | Pre-compute `pipeline_run_stats` at run completion in a background task; stats page reads from cache | Breaks at ~500 curated articles (bootstrap CI is CPU-bound at that scale) |
 
 ---
 
 ## "Looks Done But Isn't" Checklist
 
-- [ ] **Calibration plot:** Has per-bin sample count overlay — verify bins with n<10 are either suppressed or visually flagged
-- [ ] **AUC display:** Shows 95% bootstrap confidence interval alongside point estimate — verify CI is computed server-side and returned in API response
-- [ ] **PR curve:** Has a "no-skill" baseline line at y = positive_rate — verify baseline is dynamic (computed from data), not hardcoded at 0.5
-- [ ] **Recharts/chart bundle:** Charts render without hydration warnings in production build — verify with `next build && next start`, not just `next dev`
-- [ ] **Stats gate:** Page is hidden in sidebar when `n_scored_with_assertions = 0` even if `curation_count > 0` — verify by importing assertions before running pipeline
-- [ ] **Disagreements table:** Has explanatory copy framing disagreements as "worth investigating" not "model errors" — verify copy is present before user testing
-- [ ] **Single-class assertions:** API handles `ValueError: Only one class present` gracefully — verify by creating a test fixture with only ACCEPTED assertions
-- [ ] **Benchmark reference lines:** Labeled with WCM/Fred Hutch name and sample size context — verify label is visible at multiple viewport widths
+- [ ] **`retrieval_log` in `schema.sql`**: Verify `CREATE TABLE IF NOT EXISTS retrieval_log` is present. Test: `docker compose down -v && docker compose up` then run a pipeline — must not error.
+- [ ] **`update` mode end-to-end**: Verify second pipeline run with `mode=update` passes a non-empty `mindate` to `search_by_name` and the resulting PDAT filter string is syntactically valid for PubMed.
+- [ ] **Compound name quoting**: Verify `_build_author_term` produces valid `[au]` terms for `O'Brien`, `van der Berg`, `López`, `Müller`, `St. John`. Each must return non-zero `esearch_count` for researchers with known publications.
+- [ ] **`run_id` FK constraint**: Verify migration inserts `pipeline_run` row 1 *before* adding the FK to `person_article_score`. Test: migration must succeed on populated dev DB, not just empty test DB.
+- [ ] **SSE headers**: Verify `StreamingResponse` in `pipeline.py` includes `Cache-Control: no-cache` so progress events arrive incrementally, not batched at stream close.
+- [ ] **`asyncio.as_completed` result identity**: Verify `person_id` in emitted SSE events comes from `result["person_id"]`, not from the submission-order loop variable.
+- [ ] **`retrieve_known` fetches XML**: Verify PMID-upload workflow fetches article metadata from PubMed for PMIDs not already in the `article` table before scoring.
+- [ ] **`retrieval_log` not touched by score-only runs**: Verify `score_only` mode does not update `last_retrieval_date`. Test: run score-only, check that `retrieval_log` timestamp is unchanged.
 
 ---
 
@@ -207,12 +277,12 @@ The gate logic and the stats computation logic are written independently. The fr
 
 | Pitfall | Recovery Cost | Recovery Steps |
 |---------|---------------|----------------|
-| Calibration plot shipped without n-per-bin guard | LOW | Add server-side n_per_bin check to API; add fallback UI component for insufficient data; no DB migration needed |
-| AUC point estimates shipped without CIs | LOW | Add bootstrap CI computation to stats endpoint; update API response schema; update frontend to display CI |
-| Recharts hydration errors in production | MEDIUM | Wrap chart component in `dynamic(..., { ssr: false })`; switch to shadcn chart component; test production build |
-| Stats page shows for users with assertions but no joined scores | LOW | Fix gate condition in workflow state API; one-line SQL change; no migration needed |
-| Disagreements section misinterpreted by users in production | LOW-MEDIUM | Add explanatory copy; add feature evidence column; no structural change needed; requires user communication |
-| PR baseline line missing; AUC comparison misleading | LOW | Add baseline line to chart config; add prevalence stat to API response; cosmetic change |
+| `retrieval_log` missing from `schema.sql` | LOW | Add DDL to `schema.sql`; run manually on existing DB or recreate from scratch |
+| `run_id` migration fails mid-step | HIGH | Restore from pre-migration DB snapshot; rewrite as single atomic `ALTER TABLE`; re-apply |
+| `update` mode `mindate` corrupted | MEDIUM | Manually null out `last_retrieval_date` in `retrieval_log` for affected researchers; re-run in `full` mode |
+| PubMed 429s silently drop batches | MEDIUM | Add retry with exponential backoff in `fetch_articles`; re-run pipeline for researchers with unexpectedly low article counts |
+| SSE stream lost on disconnect | LOW (with Phase 3) | Poll `/api/runs/latest` on reconnect; render final state from completed `pipeline_run` record |
+| `update` mode fetches nothing for common names | MEDIUM | Check `lenient_count` log for unexpectedly low counts; verify PDAT filter syntax; test against PubMed directly |
 
 ---
 
@@ -220,31 +290,35 @@ The gate logic and the stats computation logic are written independently. The fr
 
 | Pitfall | Prevention Phase | Verification |
 |---------|------------------|--------------|
-| Calibration plot with insufficient samples | Stats API endpoint build | Test with fixture of 20 assertions — confirm plot is replaced by warning message |
-| AUC displayed without confidence interval | Stats API endpoint build | Confirm API response includes `auc_lower`, `auc_upper` fields |
-| PR curve baseline not at positive rate | Stats charts frontend build | Confirm baseline line y-value changes when assertion balance changes |
-| Recharts SSR hydration error | Chart integration (first chart added) | Run `next build` and check for hydration warnings in browser console with production build |
-| Disagreements section framing | Disagreements UI build | User review: show to one non-ML user and ask what it means; check for "model is broken" interpretation |
-| Gate checks wrong condition | Stats gate/gating logic implementation | Automated test: import assertions, skip pipeline, verify stats page hidden; run pipeline, verify stats page appears |
-| Single-class assertion crash | Stats API endpoint build | Unit test with all-ACCEPTED fixture; confirm `viable: false` returned, no 500 error |
-| WCM benchmark context missing | Stats charts frontend build | Visual review: benchmark line must be labeled with institution name and sample size on every chart |
+| `retrieval_log` schema gap | Phase 1 (first task) | Fresh `docker compose down -v && up` + pipeline run succeeds without errors |
+| `as_completed` ordering fix | Phase 1 | Multiple researchers show "Active" simultaneously in pipeline UI |
+| Connection pool exhaustion | Phase 1 | Pipeline with 8 workers + 20 researchers completes without `QueuePool` errors |
+| Global token bucket process-safety | Phase 1 (documentation) | `docker-compose.yml` and Dockerfile enforce `--workers 1` |
+| `update` mode `mindate` corruption | Phase 2 | Score-only run does not advance `last_retrieval_date`; `update` mode passes correct `mindate` |
+| Compound name quoting gaps | Phase 2 | Unit tests covering apostrophes, diacritics, multi-word names all pass |
+| `retrieve_known` missing XML fetch | Phase 2 | PMID-upload + pipeline run produces non-zero `scored_count` for freshly uploaded PMIDs |
+| `run_id` migration atomic DDL | Phase 3 (first task) | Migration runs on populated dev DB without errors; all existing scores have `run_id = 1` |
+| Reconnect semantics | Phase 3 (enabled by `pipeline_run`) | Page reload during pipeline run shows correct status on reconnect via `pipeline_run.status` |
+
+---
+
+## Prior Research Coverage
+
+The original `PITFALLS.md` (researched 2026-04-04) covers pitfalls for the Statistics page build (calibration plot small-n, AUC confidence intervals, PR curve baseline, Recharts SSR errors, disagreements framing, gating logic). Those pitfalls remain valid for the Stats page work. This file covers the v2.0 milestone additions: retrieval parity, parallelism, and historical runs.
 
 ---
 
 ## Sources
 
-- [Stable reliability diagrams for probabilistic classifiers (CORP method) — PMC](https://pmc.ncbi.nlm.nih.gov/articles/PMC7923594/)
-- [Understanding Model Calibration (ICLR 2025 blog)](https://iclr-blogposts.github.io/2025/blog/calibration/)
-- [CalibrationDisplay — scikit-learn docs](https://scikit-learn.org/stable/modules/generated/sklearn.calibration.CalibrationDisplay.html)
-- [1.16. Probability calibration — scikit-learn docs](https://scikit-learn.org/stable/modules/calibration.html)
-- [The Effect of Class Imbalance on Precision-Recall Curves — MIT Press](https://direct.mit.edu/neco/article/33/4/853/97475/The-Effect-of-Class-Imbalance-on-Precision-Recall)
-- [ROC Curves and PR Curves for Imbalanced Classification — Machine Learning Mastery](https://machinelearningmastery.com/roc-curves-and-precision-recall-curves-for-imbalanced-classification/)
-- [The receiver operating characteristic curve accurately assesses imbalanced datasets — PMC 2024](https://pmc.ncbi.nlm.nih.gov/articles/PMC11240176/)
-- [Error in Next.js with Recharts — GitHub Issue #2918](https://github.com/recharts/recharts/issues/2918)
-- [Charts not working in next-15 — shadcn/ui GitHub Issue #5661](https://github.com/shadcn-ui/ui/issues/5661)
-- [shadcn chart component docs](https://ui.shadcn.com/docs/components/radix/chart)
-- [A comparison of AUC estimators in small-sample studies — PMLR](https://proceedings.mlr.press/v8/airola10a.html)
+- Direct code inspection: `core/pubmed.py` (token bucket, query builder, esearch pagination logic), `api/services/pipeline_runner.py` (concurrency model, session lifecycle, retrieval log writes), `api/schema.sql` (DDL), `api/models.py` (ORM)
+- Project memory: `.claude/projects/.../memory/project_retrieval_parity.md` — retrieval parity requirements and `retmax` cap history
+- Project memory: `.claude/projects/.../memory/project_state.md` — `retrieval_log` schema gap (item #5), known remaining items
+- Feature doc: `docs/feature-requests/historical-pipeline-runs.md` — `run_id` migration strategy, `pipeline_run` schema
+- Milestone doc: `docs/milestones/milestone-2-pipeline-parity.md` — phase goals, open questions, `retrieve_known` gap flag
+- NCBI E-utilities documentation: rate limits, PDAT date format, `rettype=count` behavior
+- MariaDB documentation: `ON UPDATE CURRENT_TIMESTAMP` semantics, atomic multi-clause `ALTER TABLE`
+- FastAPI SSE documentation: `StreamingResponse` buffering, required headers
 
 ---
-*Pitfalls research for: ML validation statistics (ROC, calibration, PR, disagreements) added to ReCiter Desktop*
-*Researched: 2026-04-04*
+*Pitfalls research for: ReCiter Desktop v2.0 — Pipeline Parity, Parallelism, and Historical Runs*
+*Researched: 2026-04-05*

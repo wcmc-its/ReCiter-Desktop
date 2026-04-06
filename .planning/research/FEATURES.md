@@ -1,8 +1,8 @@
 # Feature Research
 
-**Domain:** ML model validation statistics page — binary classification, post-pipeline
-**Researched:** 2026-04-04
-**Confidence:** HIGH (core chart conventions verified against Azure AutoML, scikit-learn, Google ML Crash Course; charting library verified against recharts docs/npm)
+**Domain:** Research author disambiguation pipeline — retrieval parity & performance (v2.0 milestone)
+**Researched:** 2026-04-05
+**Confidence:** HIGH (Java source read directly from ~/Dropbox/GitHub/ReCiter/; Python pipeline read directly)
 
 ---
 
@@ -10,162 +10,114 @@
 
 ### Table Stakes (Users Expect These)
 
-These are standard features of any ML validation view. Missing one makes the page feel
-incomplete or unprofessional to anyone with ML training.
+Features the paper validation workflow requires. Missing these = results are not reproducible against the Java ReCiter baseline.
 
 | Feature | Why Expected | Complexity | Notes |
 |---------|--------------|------------|-------|
-| ROC curve with AUC scalar | Universal metric for binary classifiers; AUC is the headline number users cite when comparing models | LOW | FPR on x-axis, TPR on y-axis; axes labeled 0–1; AUC displayed prominently near or on the chart as a badge/callout |
-| Diagonal chance line on ROC | Every ROC tutorial shows the y=x random-classifier baseline; its absence looks like a bug | LOW | Dashed gray line from (0,0) to (1,1); labeled "Random" or "No skill" |
-| Precision-recall curve | Expected companion to ROC; PR curves expose performance on imbalanced data that ROC can hide | MEDIUM | Recall on x-axis, Precision on y-axis; horizontal baseline at prevalence rate |
-| Calibration plot (reliability diagram) | Isotonic calibration was explicitly applied to these models; users who know the pipeline expect to see its effect | MEDIUM | Predicted probability (x) vs. fraction positive (y); diagonal y=x = perfect calibration; each bin shown as a point; see conventions below |
-| Score distribution histogram colored by assertion | Standard way to visually confirm class separation; already partially built for per-researcher view | LOW | Overlapping histograms; green=ACCEPTED, red/orange=REJECTED; x-axis 0–100; bins 10 wide; well-separated = good model |
-| Summary metric row (AUC, AP, count) | Users need scalar takeaways above the charts; headline numbers before diving into curves | LOW | AUC for ROC, Average Precision for PR curve, N curations used, N accepted vs. N rejected |
-| Gate: only shown when curations exist | Users with no assertions would see meaningless flat/empty charts; gate prevents confusion | LOW | Already implemented as a pattern via `PrerequisiteGate`; need curation count check, not just score count |
+| Affiliation-filtered search (AffiliationRetrievalStrategy) | ReCiter triggers this when lenient count > 2000; without it Desktop retrieves fewer candidates for common names | HIGH | Query: `LastName FI[au] AND (keyword1[affiliation] OR keyword2[affiliation])`. Uses `home_institution_keywords` from config — already stored in DB from setup flow |
+| AffiliationInDbRetrievalStrategy | ReCiter also runs per-researcher institution strings when strict mode is active | MEDIUM | Query: `LastName FI[au] AND (InstitutionName[affiliation])`. Uses `identity.institutions`. Desktop identity currently has only `primary_institution` string — need to confirm if a single-institution query is sufficient |
+| Compound/derived name detection → strict-only mode | Names with spaces or hyphens trigger `useStrictQueryOnly=true` in Java; without this, common names like "Garcia Lopez" run only a lenient search that may return 10,000 unrelated results | HIGH | Java: `identityAuthorNames()` line 877–883, `deriveAdditionalName()` lines 916–933. Condition: last name has space/hyphen AND both parts >= 4 chars. Python pre-processing step needed before `search_by_name` |
+| Compound name quoting in strict path | Already done for lenient; must be verified for the strict path | LOW | `_build_author_term(full_name=True)` uses same `" " in last_name` check — verify it covers hyphen too. Java: `contsructAuthorQuery()` lines 168–172 |
+| `retrieve_known` mode PubMed fetch | When PMIDs are uploaded, full PubMed XML must be fetched before scoring; currently maps to `score_only` which skips metadata fetch | MEDIUM | `score_only` path in `pipeline_runner.py` skips `fetch_articles`. Need a `retrieve_known` branch that calls `fetch_articles(pmids)` for any pmid lacking stored metadata |
+| `update` mode end-to-end validation | Incremental retrieval using `mindate` from `retrieval_log` is wired but described as untested in milestone doc | LOW | Code present at lines 119–122 of `pipeline_runner.py`. Needs integration test with a known researcher on a second run |
+| Historical pipeline runs — `pipeline_run` table | Downstream stats/results pages need a run concept for reproducibility claims in the paper | MEDIUM | Schema: `(run_id PK, started_at, finished_at, mode, researcher_count, article_count, status)`. Add `run_id FK` to `person_article_score`. Migrate existing scores as run #1 |
+| Run selector on Results and Stats pages | Users reviewing paper results need to reference a specific run's scores | MEDIUM | Dropdown on `/results` and `/stats`; default to latest run. Requires `run_id` on `person_article_score` |
 
 ### Differentiators (Competitive Advantage)
 
-These raise ReCiter Desktop above generic ML dashboards and are directly tied to the project's
-institutional positioning.
+Features that distinguish Desktop from a naive name search and justify the paper's parity claims.
 
 | Feature | Value Proposition | Complexity | Notes |
 |---------|-------------------|------------|-------|
-| WCM benchmark reference lines on ROC and PR curves | Lets institutions immediately see how they compare to a production-validated system; turns abstract charts into actionable context | LOW | Horizontal reference lines at known AUC values: feedbackIdentity=0.9993, identityOnly=0.9776; Fred Hutch external validation at 0.9993; label each line in legend |
-| WCM benchmark reference lines on calibration plot | Same positioning rationale — calibration quality is non-obvious without a reference point | MEDIUM | Requires WCM calibration curve data, not just a scalar; or simplify to a callout note: "WCM model well-calibrated at this range" |
-| Strongest Disagreements section | Directly actionable: users can find and fix miscurated articles, which improves future model training | MEDIUM | See full definition below |
-| Model type indicator | feedbackIdentity vs. identityOnly have different expected performance levels; showing which model produced the stats prevents misinterpretation | LOW | Badge next to headline: "feedbackIdentity model" or "identityOnly model" |
-| Bin count display on calibration chart | Shows users how many (person_id, pmid) pairs fall in each bin — critical for interpreting noisy bins | LOW | Display n= inside or below each calibration dot; dim dots with n < threshold (e.g., n < 5) |
+| `asyncio.as_completed` ordering for parallel pipeline | Shows researchers completing as they finish instead of submission order; makes the UI responsive for large rosters | LOW | Current code awaits futures in submission order (lines 347–361 of `pipeline_runner.py`). Replace inner loop with `asyncio.as_completed` — two-line change with immediate UX impact |
+| Dynamic `MAX_WORKERS` based on API key presence | With API key: 9 req/sec budget → more parallelism is safe; without: 2.5 req/sec → fewer workers prevent 429 errors | LOW | Current: `min(4, cpu_count)`. Change to: `8 if api_key else 3`. NCBI rates: 10/sec with key, 3/sec without; Desktop uses 9 and 2.5 with headroom |
+| Run comparison view (side-by-side score deltas, overlaid ROC) | Enables before/after comparison after model or data changes; useful for paper figures | HIGH | Requires historical runs schema first. Nice-to-have for paper, not blocking |
+| Per-researcher export button on Results listing | Librarians want per-person CSV without downloading the full dataset | LOW | Backend already has score export logic; needs a button on the listing row |
+| Source labeling (candidate vs known) in results detail | Distinguishes articles found by PubMed search from those uploaded as known assertions | LOW | `person_article.source` already stores "search" vs "upload". Show a label chip in the article list |
+| Search/filter on Results listing | Score-range filter + researcher name search on the `/results` index page | LOW | Frontend-only filtering on already-loaded researcher list; no backend changes needed |
+| Dashboard surfaced metrics (last run date, overall AUC, total researchers) | Makes the home page useful as a status board instead of just a nav hub | LOW | All values already available from `/api/pipeline/status`; frontend change only |
+| Institution name display on setup page | Setup currently reconstructs institution name from keywords; storing and displaying the original label is more trustworthy | LOW | Store `institution_label` at setup time; display it on the setup summary card |
 
 ### Anti-Features (Commonly Requested, Often Problematic)
 
 | Feature | Why Requested | Why Problematic | Alternative |
 |---------|---------------|-----------------|-------------|
-| Per-researcher ROC/calibration drilldown | Seems like useful granularity | Individual researchers have too few curated articles for stable curves; calibration is undefined with <20 samples per bin; results would be misleading and noisy | Explicitly scope the stats page to aggregate only; note this in the UI with copy like "across all researchers" |
-| Interactive threshold slider on ROC curve | Familiar from per-researcher results page | Adds complexity without insight; the ROC curve is threshold-agnostic by definition; a slider implies the user should tune the threshold here, which conflicts with the slider on the per-researcher page | Show the current operating threshold as a dot on the ROC curve, not a draggable control |
-| Confusion matrix | Natural pairing with ROC | The stats page already shows the histogram; a confusion matrix requires picking a single threshold and is less expressive than the full curve; also harder to read for non-ML users | If needed, derive TP/FP/FN/TN counts in the summary row at the current default threshold (70), not as a full matrix UI |
-| Real-time stats during pipeline run | Feels dynamic | Stats require the join of `person_article_score` + `curations`; during a run, scores are partial; incremental stats are misleading | Compute stats post-hoc after pipeline completes; stats page is post-pipeline only |
-| Custom benchmark upload | Flexibility | Adds file parsing, validation, and UI complexity; the two known benchmarks (WCM, Fred Hutch) are the only meaningful comparisons for this model | Hard-code WCM and Fred Hutch as named reference lines; label them clearly |
-| Confidence intervals on ROC curve | Academically rigorous | Requires bootstrap resampling (computationally expensive on backend) and more complex frontend rendering; calibration note about small n is sufficient | Note sample size in the summary row; mention that small N reduces reliability instead of computing CIs |
-| Average precision vs. AUROC debate copy | Some users will ask "which is better?" | Not a UI feature; turns into documentation/tooltip sprawl | One sentence tooltip on each chart explaining when it's most meaningful |
+| Full 8-strategy retrieval for all researchers by default | Maximizes recall; matches Java ReCiter perfectly | For 500 researchers without API key, 8 strategies × 500 researchers = ~4,000 API calls taking 20+ minutes; also most strategies (grants, known relationships, department) require fields rarely present in uploaded identity CSVs | Run FirstNameInitial for everyone; trigger affiliation strategies only when lenient count > threshold or when institution keywords are configured. This is exactly what Java does — each supplementary strategy is conditional |
+| Real-time calibration updates during pipeline run | Feels dynamic and responsive | Stats require a full join across all curations + scores; partial results produce unstable AUC estimates and mislead users | Compute stats once at pipeline completion. Already established as out-of-scope in PROJECT.md |
+| Automatic re-score after curation import | Convenience — import assertions and immediately see updated scores | Couples two distinct operations; makes it hard to audit which scores correspond to which curation set | Keep import and pipeline as separate explicit user actions. The pipeline CTA already surfaces on the stats page after assertions are imported |
+| Unlimited retmax (no threshold cap) | Some prolific researchers might be missed by the 2000 cap | Removing the cap for a common name like "Wang J" returns 50,000+ results; efetch at 200/batch would take hours and likely trigger NCBI throttling | The strict fallback (1000 cap) is the correct mechanism for high-volume names. Thresholds match Java's `DEFAULT_THRESHOLD=2000` and `STRICT_THRESHOLD=1000` exactly |
+| Per-researcher stats drill-down (AUC per person) | Seems granular and useful for debugging | Individual researchers have too few curations for stable AUC curves; displaying per-person AUC misleads users into trusting unreliable numbers | Aggregate stats across the run. Per-researcher score histogram already exists on the results detail page |
 
 ---
 
 ## Feature Dependencies
 
 ```
-[Stats Page]
-    └──requires──> [Curations in DB] (person_id + pmid + assertion)
-                       └──requires──> [Scoring pipeline has run] (person_article_score rows exist)
-                                          └──requires──> [Researchers uploaded] (identity rows)
+[Compound/derived name detection]
+    └──enables──> [useStrictQueryOnly flag = true]
+                      └──triggers──> [Affiliation strategies as supplementary search]
 
-[Strongest Disagreements]
-    └──requires──> [Stats join query: person_article_score + curation + article + identity]
-    └──enhances──> [Results page per-researcher] (disagreements link to /results/[personId] filtered)
+[Historical pipeline_run table + run_id on person_article_score]
+    └──required by──> [Run selector on Results page]
+    └──required by──> [Run selector on Stats page]
+    └──required by──> [Run comparison view]
+    └──required by──> [Pre-computed per-run AUC at completion]
 
-[Benchmark reference lines]
-    └──requires──> [Recharts ReferenceLine component] (or equivalent SVG overlay)
-    └──independent of──> [user data] (hardcoded WCM/Fred Hutch scalars)
+[Dynamic MAX_WORKERS]
+    └──depends on──> [API key available at pipeline start time]
+                     (already retrieved via get_pubmed_api_key in _process_one_researcher)
 
-[Calibration plot]
-    └──requires──> [Backend endpoint] computing calibration_curve via scikit-learn
-    └──requires──> [Score stored as raw probability OR normalized 0-100 converted back to 0-1]
-    Note: calibrated_score in DB is stored as float (0.0–1.0 pre-*100); confirm before backend work
+[asyncio.as_completed ordering]
+    └──independent — two-line change, no dependencies]
 
-[Score distribution histogram by assertion]
-    └──requires──> [Join: person_article_score + curation on (person_id, pmid)]
-    └──builds on──> [Existing per-researcher histogram] (same shape, new coloring logic)
+[Affiliation-filtered search]
+    └──depends on──> [home_institution_keywords in institution config]
+                     (already stored in DB from setup flow)
+    └──conditional on──> [useStrictQueryOnly = true OR lenient count > threshold]
+
+[retrieve_known mode PubMed fetch]
+    └──independent of retrieval strategy changes]
+    └──required by──> [Accurate scoring for PMID-upload-only researchers]
+
+[update mode end-to-end]
+    └──depends on──> [retrieval_log.last_retrieval_date populated correctly]
+                     (already written in pipeline_runner.py line 183)
 ```
 
 ### Dependency Notes
 
-- **Stats page requires curations:** The gate should check `SELECT COUNT(*) FROM curation` > 0, not just score count. This is a different check than the existing `scoreCount > 0` gate on the Results page.
-- **Calibration requires probability not integer scores:** The `calibrated_score` column is FLOAT (0.0–1.0) before the frontend multiplies by 100. The backend stats endpoint must use the raw float, not the `round(score * 100)` integer shown in the UI.
-- **Strongest Disagreements links to per-researcher Results:** The disagreements table should deep-link to `/results/[personId]` with the specific PMID highlighted or pre-filtered. This already exists as a page; no new route needed.
-
----
-
-## Strongest Disagreements — Full Definition
-
-This section needs precise specification because it is the most novel and domain-specific feature.
-
-### What It Is
-
-A ranked table of (person_id, pmid) pairs where the model score and the human assertion diverge most. Two disagreement types:
-
-- **High score, REJECTED** — Model says "likely match" (score ≥ threshold), human says "not this person's article." These are false positives. The model is overconfident.
-- **Low score, ACCEPTED** — Model says "unlikely match" (score < threshold), human says "this is theirs." These are false negatives. The model missed something.
-
-### Ranking Approach
-
-Rank by absolute disagreement magnitude: `|score - assertion_value|` where assertion_value = 100 for ACCEPTED and 0 for REJECTED. This simplifies to:
-- For REJECTED articles: rank by `score DESC` (highest score first = worst FP)
-- For UPDATED/ACCEPTED articles: rank by `score ASC` (lowest score first = worst FN)
-
-Combine both lists, re-rank by magnitude, take top N.
-
-### What to Show Per Row
-
-| Column | Content |
-|--------|---------|
-| Researcher | first_name + last_name |
-| Article | Truncated title (link to PubMed) |
-| Score | Score badge (same component as results page) |
-| Assertion | "ACCEPTED" or "REJECTED" badge |
-| Gap | Numeric gap (e.g., "Score 91, Rejected" or "Score 12, Accepted") |
-| Link | "View" → /results/[personId] |
-
-### Inline vs. Full View
-
-- **Inline (Stats page):** Top 5 rows. "View all X disagreements →" link filters the Results page.
-- **Full view:** Use existing Results page filtered to disagreement set. No new page needed for v1.1.
-
-### Threshold for "disagreement"
-
-Use the same default threshold (70) stored in config. A REJECTED article scoring 69 is barely a disagreement and should rank lower than a REJECTED article scoring 95. The gap metric handles this automatically.
-
----
-
-## Calibration Plot Conventions
-
-Research-backed conventions that must be followed to avoid misleading the user:
-
-**Bin size:** 10 bins (n_bins=10) using uniform strategy is the standard for scikit-learn `calibration_curve`. Use 10 unless curation count is < 50, in which case fall back to 5 bins and display a warning "Limited samples — calibration plot may be noisy."
-
-**Strategy:** Uniform (equal-width bins) is the default and most interpretable for users. Quantile binning better handles uneven score distributions but produces unequal x-axis spacing which confuses non-ML users. Use uniform.
-
-**Diagonal reference:** The y=x line is mandatory. It represents perfect calibration. Label it "Perfect calibration" in the legend.
-
-**Bin sample count:** Display n= for each bin point. Research shows that bins with very few samples produce unreliable calibration estimates. Dim or mark dots with n < 5 as "low confidence."
-
-**Axis labels:** x-axis = "Mean predicted score", y-axis = "Fraction of positives (ACCEPTED rate)". Never use raw probability language like "0.0 to 1.0" when the UI shows scores 0–100; normalize internally but display consistently with the rest of the app.
-
-**Over/under calibration interpretation:** If points are above the diagonal, the model under-predicts (conservative); below = over-predicts (overconfident). This is standard. A note in the chart title or tooltip should explain this in plain English: "Points above the line: model is conservative. Points below: model is overconfident."
+- **Affiliation strategy requires institution keywords**: `home_institution_keywords` must be non-empty. Desktop already prompts for this in setup. If empty, the strategy must be silently skipped — same as Java's `if identity.getInstitutions() != null` guard at line 287 of `AliasReCiterRetrievalEngine`.
+- **Historical runs require DB migration**: Adding `run_id` to `person_article_score` is a breaking schema change. Existing scores must be migrated as `run_id = 1` to avoid null FK violations. Plan migration script alongside schema definition.
+- **Run selector requires historical runs**: Cannot build the UI without the data model. Phase ordering is strict — schema first, then selector.
+- **Derived name detection must run before `search_by_name`**: The `useStrictQueryOnly` flag is determined by pre-processing identity names. This step must happen in `_process_one_researcher` before the search call, not inside `search_by_name`.
 
 ---
 
 ## MVP Definition
 
-### Launch With (v1.1 milestone)
+Context: this is a subsequent milestone on a working v1.0 product. "MVP" here means minimum to satisfy the paper validation goal (retrieval parity + reproducibility).
 
-- [ ] Summary metric row — AUC, Average Precision, N curations, N accepted vs. rejected, model type badge
-- [ ] Score distribution histogram colored by assertion (ACCEPTED=green, REJECTED=red)
-- [ ] ROC curve with AUC, diagonal chance line, WCM+Fred Hutch reference lines
-- [ ] Precision-recall curve with baseline reference, WCM+Fred Hutch AP reference lines
-- [ ] Calibration plot with diagonal, bin counts displayed, low-n warning
-- [ ] Strongest Disagreements: top 5 inline table + "View all" link
-- [ ] Gate: page hidden (prerequisite gate) when curation count = 0
+### Paper Validation Minimum
 
-### Add After Validation (v1.x)
+- [ ] **`asyncio.as_completed` ordering** — two-line change, no risk, immediate UX improvement
+- [ ] **Dynamic MAX_WORKERS based on API key** — prevents 429 throttling in parallel runs
+- [ ] **Affiliation-filtered search (AffiliationRetrievalStrategy)** — single biggest retrieval gap between Desktop and Java for researchers at named institutions
+- [ ] **Compound/derived name detection and strict-only mode** — required for researchers with hyphenated or multi-word last names; affects a meaningful fraction of any roster
+- [ ] **`retrieve_known` mode PubMed fetch** — without this, PMID-upload researchers have no metadata and score poorly
 
-- [ ] Current operating threshold dot on ROC curve — only after user testing confirms value
-- [ ] Calibration plot for WCM as an overlay (requires WCM calibration curve data, not just scalar)
-- [ ] Export stats as PNG or CSV — useful for institutional reports, low priority until requested
+### Add After First Phase
 
-### Future Consideration (v2+)
+- [ ] **Historical pipeline runs schema + run selector** — needed for reproducibility; medium complexity; requires migration
+- [ ] **`update` mode integration test** — code present, needs validation against known test set
+- [ ] **Per-researcher export button + source labeling** — low complexity, high librarian value
+- [ ] **Search/filter on Results listing** — frontend-only, low complexity
+- [ ] **Dashboard metrics** — frontend-only, data already available
 
-- [ ] Per-researcher mini-stats (requires many more curations per researcher than typical users have)
-- [ ] Confidence intervals via bootstrap (expensive computation, academic use only)
-- [ ] Custom benchmark upload
+### Future Consideration
+
+- [ ] **Full 8-strategy cascade** (grant, department, known relationship, second initial) — adds marginal recall; implement only if parity testing reveals a gap vs Java on the 20-researcher test set
+- [ ] **Run comparison view with overlaid ROC** — valuable but high complexity; defer until historical runs are stable
+- [ ] **DepartmentRetrievalStrategy** — requires `organizational_units` field on identity, not currently in the identity CSV schema
 
 ---
 
@@ -173,86 +125,135 @@ Research-backed conventions that must be followed to avoid misleading the user:
 
 | Feature | User Value | Implementation Cost | Priority |
 |---------|------------|---------------------|----------|
-| Summary metric row (AUC, AP, counts) | HIGH | LOW | P1 |
-| Score distribution histogram by assertion | HIGH | LOW | P1 |
-| ROC curve + AUC + reference lines | HIGH | MEDIUM | P1 |
-| PR curve + reference lines | HIGH | MEDIUM | P1 |
-| Calibration plot | MEDIUM | MEDIUM | P1 |
-| Strongest Disagreements top 5 | HIGH | MEDIUM | P1 |
-| Prerequisite gate (curation count) | HIGH | LOW | P1 |
-| Model type badge | MEDIUM | LOW | P1 |
-| Bin counts on calibration | MEDIUM | LOW | P2 |
-| Low-n calibration warning | MEDIUM | LOW | P2 |
-| Operating threshold dot on ROC | LOW | LOW | P2 |
-| "View all" disagreements filtered link | MEDIUM | LOW | P2 |
+| asyncio.as_completed ordering | MEDIUM | LOW | P1 |
+| Dynamic MAX_WORKERS | HIGH | LOW | P1 |
+| Affiliation-filtered search | HIGH | HIGH | P1 |
+| Compound/derived name detection | HIGH | MEDIUM | P1 |
+| retrieve_known PubMed fetch | HIGH | MEDIUM | P1 |
+| Historical pipeline_run table | HIGH | MEDIUM | P1 |
+| Run selector on Results/Stats | MEDIUM | MEDIUM | P2 |
+| update mode end-to-end test | HIGH | LOW | P2 |
+| Per-researcher export button | MEDIUM | LOW | P2 |
+| Source labeling (candidate vs known) | LOW | LOW | P2 |
+| Search/filter on Results listing | MEDIUM | LOW | P2 |
+| Dashboard metrics | LOW | LOW | P2 |
+| Institution name display fix | LOW | LOW | P2 |
+| Run comparison view | MEDIUM | HIGH | P3 |
+| Full 8-strategy cascade | MEDIUM | HIGH | P3 |
+| DepartmentRetrievalStrategy | LOW | MEDIUM | P3 |
 
 **Priority key:**
-- P1: Must have for v1.1 launch
-- P2: Should have, add during v1.1 implementation if time allows
+- P1: Must have for paper validation
+- P2: Should have, add during milestone implementation
 - P3: Nice to have, future milestone
 
 ---
 
-## Backend Computation Notes
+## Retrieval Strategy Reference (from Java source — read directly)
 
-All curve data must be computed server-side in FastAPI (Python), not in the browser. The browser
-only receives arrays of (x, y) points. This is correct because:
+This section documents the exact Java cascade for Desktop implementation. Read from `AliasReCiterRetrievalEngine.java` and `AbstractRetrievalStrategy.java`.
 
-1. scikit-learn's `roc_curve`, `precision_recall_curve`, and `calibration_curve` are already
-   available (scikit-learn is in requirements.txt for the scoring pipeline).
-2. The join query (`person_article_score` + `curation`) is a SQL operation best done in Python.
-3. Frontend charting libraries (Recharts) expect pre-computed arrays, not raw data tables.
+### Condition Logic (from `AliasReCiterRetrievalEngine.retrieveData`)
 
-**New API endpoint needed:** `GET /api/stats` returning:
-```json
-{
-  "model_type": "feedbackIdentity",
-  "n_curations": 342,
-  "n_accepted": 287,
-  "n_rejected": 55,
-  "auc_roc": 0.9921,
-  "average_precision": 0.9874,
-  "roc_curve": [{"fpr": 0.0, "tpr": 0.0}, ...],
-  "pr_curve": [{"recall": 0.0, "precision": 1.0}, ...],
-  "calibration_curve": [{"prob_pred": 0.05, "prob_true": 0.04, "n": 12}, ...],
-  "score_distribution": [
-    {"bin_start": 0, "accepted": 1, "rejected": 8},
-    ...
-  ],
-  "strongest_disagreements": [
-    {"person_id": "...", "pmid": "...", "score": 91, "assertion": "REJECTED", "gap": 91, "title": "...", "first_name": "...", "last_name": "..."},
-    ...
-  ]
-}
+```
+1. Always run: GoldStandardRetrievalStrategy (fetch PubMed XML for known/rejected PMIDs)
+2. If identity.orcid != null AND != "NOT SET": OrcidRetrievalStrategy
+3. Always run: EmailRetrievalStrategy
+4. Always run: FirstNameInitialRetrievalStrategy
+   Lenient query: LastName FI[au]
+   → Count lenient results (esearch count-only call)
+   → If count <= 2000: fetch lenient results; queryType = LENIENT_LOOKUP
+   → If count > 2000: set useStrictQueryOnly = true; queryType = STRICT_EXCEEDS_THRESHOLD_LOOKUP
+                       store raw eSearchCount for ArticleSizeStrategy scoring
+
+5. If useStrictQueryOnly == true OR lenient count > 2000:
+   a. If identity.institutions non-empty: AffiliationInDbRetrievalStrategy
+      Query: LastName FI[au] AND (InstitutionName[affiliation])
+   b. AffiliationRetrievalStrategy (home institution keywords from config)
+      Query: LastName FI[au] AND (keyword1[affiliation] OR keyword2[affiliation])
+   c. If identity.organizationalUnits non-empty: DepartmentRetrievalStrategy
+   d. If identity.grants non-empty: GrantRetrievalStrategy
+   e. FullNameRetrievalStrategy
+      Strict query: LastName FullFirstName[au]
+   f. If identity.knownRelationships non-empty: KnownRelationshipRetrievalStrategy
+   g. SecondInitialRetrievalStrategy
+
+6. useStrictQueryOnly is ALSO set to true if DERIVED names exist (compound name check runs
+   before the FirstNameInitial step).
 ```
 
-**Charting library:** Recharts (recharts@3.x, current as of 2026). Use:
-- `LineChart` + `Line` for ROC and PR curves
-- `ReferenceLine` for diagonal (y=x) and benchmark horizontal lines — confirmed supported
-- `BarChart` + `Bar` for score distribution histogram (two stacked bars per bin: accepted + rejected)
-- `ScatterChart` + `Scatter` for calibration plot dots (each bin = one point)
-- `ReferenceLine` with `segment` prop for the perfect calibration diagonal on scatter chart
+### Thresholds Confirmed
 
-Recharts is the correct choice: it is lightweight, React-native, has no peer dependency conflicts
-with the existing stack (Next.js 14, Tailwind, shadcn), and supports all required chart primitives.
-No alternative is needed.
+| Threshold | Java value | Desktop default | Match? |
+|-----------|------------|-----------------|--------|
+| `DEFAULT_THRESHOLD` (lenient) | 2000 (`AbstractRetrievalStrategy.java` line 75) | 2000 (config) | Yes |
+| `STRICT_THRESHOLD` | 1000 (`AbstractRetrievalStrategy.java` line 81) | 1000 (config) | Yes |
+
+### Compound Name Detection Rules (from `identityAuthorNames()` and `deriveAdditionalName()`)
+
+Trigger `useStrictQueryOnly = true` when any of these apply to primary or alternate name:
+- `lastName.contains(" ") || lastName.contains("-")` AND both parts after split >= 4 chars
+- `firstName.contains(" ") || firstName.contains(".")` (e.g., "W. Clay")
+- `firstName.length() == 1 && middleName != null` (single-initial first name with middle name)
+
+Derived name examples from `deriveAdditionalName()`:
+- "Garcia Lopez" → also search `Garcia J[au]` OR `Lopez J[au]`
+- "W. Clay Bracken" → also search `Clay B[au]` (middle as first) or `W B[au]`
+
+Quoting rule (from `contsructAuthorQuery()` lines 161–163, 168–172):
+- Lenient: if `lastName.contains(" ") || lastName.contains("-")` → `"De la Cruz J"[au]`
+- Strict: if lastName OR firstName has space/hyphen → `"Garcia Lopez Maria"[au]`
+
+### Desktop Retrieval Gap Summary
+
+| Strategy | Java | Desktop | Gap |
+|----------|------|---------|-----|
+| FirstNameInitialRetrievalStrategy (lenient) | Yes | Yes | None |
+| FirstNameInitialRetrievalStrategy (strict) | Yes | Yes | None — `search_by_name` strict path does `LastName FullFirstName[au]` |
+| Lenient/strict thresholds | 2000/1000 | 2000/1000 | None |
+| Compound name quoting (lenient) | Yes | Yes | None — `_build_author_term` line 292–293 |
+| Compound name quoting (strict) | Yes | Partial | Verify: `_build_author_term(full_name=True)` checks `" " in last_name` — confirm hyphen is also covered |
+| Derived name splitting → strict-only mode | Yes | No | **Gap** — needs pre-processing in `_process_one_researcher` |
+| AffiliationRetrievalStrategy | Yes (conditional on threshold) | No | **Gap** — highest priority for paper parity |
+| AffiliationInDbRetrievalStrategy | Yes (conditional) | No | **Gap** — medium priority |
+| FullNameRetrievalStrategy | Yes (strict mode) | Partial | `search_by_name` strict path covers this for the primary name |
+| OrcidRetrievalStrategy | Yes (if orcid set) | No | Medium priority — orcid field already in identity model |
+| GoldStandardRetrievalStrategy | Yes | Partial (retrieve_known incomplete) | `retrieve_known` needs PubMed fetch wiring |
+| EmailRetrievalStrategy | Yes | No | Low priority — PubMed email field rarely populated |
+| DepartmentRetrievalStrategy | Yes (conditional) | No | Low priority — requires org unit field not in current CSV schema |
+| GrantRetrievalStrategy | Yes (conditional) | No | Low priority — grant IDs rarely on identity records |
+
+### Parallel Processing — Current vs Target
+
+Current code (`pipeline_runner.py` lines 334–361):
+- Submits all researchers to `ThreadPoolExecutor` concurrently (good)
+- Awaits futures in **submission order** (not completion order) — means UI blocks on slowest researcher in each batch
+- `MAX_WORKERS = min(4, cpu_count)` — ignores API key presence
+
+Target behavior (from Java: `ExecutorService.newWorkStealingPool(15)` line 122 of `AliasReCiterRetrievalEngine`):
+- Java uses work-stealing pool of 15 threads for retrieval
+- Python equivalent: `asyncio.as_completed` for yield ordering + higher `MAX_WORKERS` with API key
+
+Fix is two independent changes:
+1. Replace `for pid in person_ids: result = await futures[pid]` with `for future in asyncio.as_completed(futures.values()):`
+2. Set `MAX_WORKERS = 8 if api_key else 3` at pipeline start time
 
 ---
 
 ## Sources
 
-- [Azure AutoML: Evaluate experiment results](https://learn.microsoft.com/en-us/azure/machine-learning/how-to-understand-automated-ml?view=azureml-api-2) — authoritative reference for classification chart layout and conventions (ROC, PR, calibration)
-- [scikit-learn: calibration_curve](https://scikit-learn.org/stable/modules/generated/sklearn.calibration.calibration_curve.html) — n_bins parameter, strategy options, return values
-- [scikit-learn: Precision-Recall](https://scikit-learn.org/stable/auto_examples/model_selection/plot_precision_recall.html) — PR curve conventions
-- [scikit-learn: roc_auc_score](https://scikit-learn.org/stable/modules/generated/sklearn.metrics.roc_auc_score.html) — AUC computation
-- [Google ML Crash Course: ROC and AUC](https://developers.google.com/machine-learning/crash-course/classification/roc-and-auc) — ROC visualization conventions
-- [Evidently AI: Explain ROC curve](https://www.evidentlyai.com/classification-metrics/explain-roc-curve) — ROC best practices for web dashboards
-- [Stable reliability diagrams — PNAS](https://www.pnas.org/doi/10.1073/pnas.2016191118) — calibration bin size research
-- [abzu.ai: Calibration introduction](https://www.abzu.ai/data-science/calibration-introduction-part-1/) — "10 bins is the common safe default" sourced here
-- [recharts npm](https://www.npmjs.com/package/recharts) — version 3.x confirmed current; ReferenceLine, ComposedChart, ScatterChart confirmed supported
-- [Recharts: Line Chart With Reference Lines](https://recharts.github.io/en-US/examples/LineChartWithReferenceLines/) — confirms ReferenceLine works in LineChart context
-- [MachineLearningMastery: ROC vs PR Curves for Imbalanced Classification](https://machinelearningmastery.com/roc-curves-and-precision-recall-curves-for-imbalanced-classification/) — anti-pattern: ROC alone is insufficient for imbalanced data
+- `/Users/paulalbert/Dropbox/GitHub/ReCiter/src/main/java/reciter/xml/retriever/engine/AliasReCiterRetrievalEngine.java` — primary retrieval orchestration; `identityAuthorNames()`, `deriveAdditionalName()`, `retrieveData()` cascade (read directly, HIGH confidence)
+- `/Users/paulalbert/Dropbox/GitHub/ReCiter/src/main/java/reciter/xml/retriever/pubmed/AbstractRetrievalStrategy.java` — `DEFAULT_THRESHOLD=2000`, `STRICT_THRESHOLD=1000`, lenient/strict decision tree (read directly, HIGH confidence)
+- `/Users/paulalbert/Dropbox/GitHub/ReCiter/src/main/java/reciter/xml/retriever/pubmed/PubMedQueryType.java` — `contsructAuthorQuery()` compound name quoting logic (read directly, HIGH confidence)
+- `/Users/paulalbert/Dropbox/GitHub/ReCiter/src/main/java/reciter/xml/retriever/pubmed/AffiliationRetrievalStrategy.java` — home institution keyword query construction (read directly, HIGH confidence)
+- `/Users/paulalbert/Dropbox/GitHub/ReCiter/src/main/java/reciter/xml/retriever/pubmed/AffiliationInDbRetrievalStrategy.java` — per-researcher institution query (read directly, HIGH confidence)
+- `/Users/paulalbert/Dropbox/GitHub/ReCiter/src/main/java/reciter/xml/retriever/pubmed/FirstNameInitialRetrievalStrategy.java` — lenient query construction (read directly, HIGH confidence)
+- `/Users/paulalbert/Dropbox/GitHub/ReCiter/src/main/java/reciter/xml/retriever/pubmed/FullNameRetrievalStrategy.java` — strict query construction (read directly, HIGH confidence)
+- `/Users/paulalbert/Dropbox/GitHub/ReCiter-Desktop/core/pubmed.py` — current Desktop retrieval implementation (read directly, HIGH confidence)
+- `/Users/paulalbert/Dropbox/GitHub/ReCiter-Desktop/api/services/pipeline_runner.py` — current parallel pipeline orchestration (read directly, HIGH confidence)
+- `/Users/paulalbert/Dropbox/GitHub/ReCiter-Desktop/docs/milestones/milestone-2-pipeline-parity.md` — milestone requirements (read directly, HIGH confidence)
+- `/Users/paulalbert/Dropbox/GitHub/ReCiter-Desktop/.planning/PROJECT.md` — project context and out-of-scope constraints (read directly, HIGH confidence)
 
 ---
-*Feature research for: ML validation statistics page (ReCiter Desktop v1.1)*
-*Researched: 2026-04-04*
+*Feature research for: ReCiter Desktop v2.0 — Pipeline Parity & Performance milestone*
+*Researched: 2026-04-05*

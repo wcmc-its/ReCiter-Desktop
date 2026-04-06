@@ -1,8 +1,8 @@
 # Architecture Research
 
-**Domain:** Statistics & Validation page — FastAPI + Next.js 14 App Router
-**Researched:** 2026-04-04
-**Confidence:** HIGH (based on direct codebase inspection, no speculation)
+**Domain:** v2.0 Pipeline Parity & Performance — Integration architecture for ReCiter Desktop
+**Researched:** 2026-04-05
+**Confidence:** HIGH (derived from direct codebase inspection, no speculation)
 
 ---
 
@@ -11,465 +11,524 @@
 ### System Overview
 
 ```
-┌──────────────────────────────────────────────────────────────┐
-│  Next.js 14 App Router (port 3002)   "use client" pages      │
-│                                                               │
-│  /pipeline page  ──── SSE ────→  POST /api/pipeline/run      │
-│       │                                                       │
-│       └── pipelineFinished=true                              │
-│               │                                               │
-│       "View Statistics" link  ─────→  /stats page (NEW)      │
-│                                           │                   │
-│                              apiFetch("/api/stats")  ──────── │
-├───────────────────────────────────────────────────────────────┤
-│  FastAPI (port 8090)                                          │
-│                                                               │
-│  GET /api/stats  (NEW router: api/routers/stats.py)          │
-│       │                                                       │
-│       └── JOIN person_article_score + curation                │
-│               │                                               │
-│       sklearn.metrics: roc_curve, auc, precision_recall_curve │
-│       numpy: histogram bins                                   │
-│               │                                               │
-│       → StatsResponse JSON (serialized, no numpy types)      │
-├───────────────────────────────────────────────────────────────┤
-│  MariaDB                                                      │
-│  person_article_score (person_id, pmid, model_type,          │
-│                        calibrated_score)                      │
-│  curation            (person_id, pmid, assertion)            │
-└──────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────┐
+│  Next.js 14 Frontend (port 3000)                                     │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐               │
+│  │ WorkflowCtx  │  │ Results Page │  │ Pipeline Page│               │
+│  │ /lib/workflow│  │ /results/[id]│  │ /pipeline    │               │
+│  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘               │
+│         │                 │                  │ SSE stream            │
+├─────────┼─────────────────┼──────────────────┼──────────────────────┤
+│  FastAPI Backend (port 8000)                 │                       │
+│  ┌──────────────┐  ┌──────────────┐  ┌───────┴──────────────┐       │
+│  │ /api/scores  │  │ /api/stats   │  │ /api/pipeline/run    │       │
+│  │ routers/     │  │ routers/     │  │ StreamingResponse    │       │
+│  │ scores.py    │  │ stats.py     │  │ (SSE)                │       │
+│  └──────┬───────┘  └──────┬───────┘  └──────┬───────────────┘       │
+│         │                 │                  │                       │
+│  ┌──────▼─────────────────▼──────────────────▼───────────────────┐  │
+│  │  api/services/pipeline_runner.py                               │  │
+│  │  - run_pipeline() async generator → SSE events                │  │
+│  │  - _process_one_researcher() sync → ThreadPoolExecutor        │  │
+│  └──────┬──────────────────────────────────────────────────────┬─┘  │
+│         │                                                       │    │
+│  ┌──────▼──────────────────┐    ┌──────────────────────────────▼──┐ │
+│  │  core/ (Python)         │    │  MariaDB tables                  │ │
+│  │  pubmed.py              │    │  identity                        │ │
+│  │  scoring.py             │    │  article                         │ │
+│  │  feature_generator.py   │    │  person_article                  │ │
+│  │  target_author.py       │    │  person_article_score            │ │
+│  └─────────────────────────┘    │  retrieval_log                   │ │
+│                                 │  curation                        │ │
+│                                 │  pipeline_run  (NEW v2.0)        │ │
+│                                 └──────────────────────────────────┘ │
+└──────────────────────────────────────────────────────────────────────┘
 ```
 
 ### Component Responsibilities
 
-| Component | Responsibility | Status |
-|-----------|----------------|--------|
-| `api/routers/stats.py` | SQL join, metric computation via sklearn, JSON serialization | NEW |
-| `frontend/app/stats/page.tsx` | Client component: fetch stats, render charts | NEW |
-| `frontend/components/sidebar.tsx` | Add Stats nav item with curation gate | MODIFIED |
-| `frontend/lib/workflow.tsx` | Add `curationCount` to WorkflowState | MODIFIED |
-| `api/routers/researchers.py` | Likely already exposes curation count; verify | VERIFY |
-| `api/routers/pipeline.py` | POST-pipeline "View Statistics" link injection | MODIFIED (UI only) |
+| Component | Responsibility | Current State |
+|-----------|----------------|---------------|
+| `core/pubmed.py` | PubMed E-utilities: esearch, efetch, rate limiting, strict/lenient cascade | Complete — `search_by_name()` fully implements the strategy |
+| `api/services/pipeline_runner.py` | Orchestrates retrieval + scoring per researcher; emits SSE events | Mostly complete — awaits futures in submission order (not as_completed) |
+| `api/routers/pipeline.py` | HTTP layer for SSE stream + `/status` endpoint | Complete |
+| `api/routers/scores.py` | Per-researcher scores, CSV export | Complete — no filter params yet |
+| `api/models.py` + `api/schema.sql` | SQLAlchemy models + DDL for all 6 tables | Complete — no `run_id` concept |
+| `frontend/lib/workflow.tsx` | WorkflowContext: prerequisite gate state, pipeline running flag | Complete — no `lastRunId` |
+| `frontend/app/results/[personId]/page.tsx` | Per-researcher article list with histogram, SHAP panel | Complete — no search/filter |
+| `api/services/stats_service.py` | ROC/AUC, calibration, PR, distribution, disagreements | Complete — not run-scoped |
 
 ---
 
-## Computation Location Decision: Python Backend (sklearn)
+## Integration Points for v2.0 Features
 
-**Recommendation: Compute everything in the FastAPI backend. Do not compute metrics in the browser.**
+### 1. Retrieval Strategy Parity
 
-**Rationale:**
+**Status of `core/pubmed.py`:** The implementation is already correct and complete. `search_by_name()` implements the full ReCiter cascading strategy:
+- Lenient query: `LastName FirstInitial[au]`
+- esearch count check against `lenient_threshold` (2000)
+- If over threshold: strict query `LastName FullFirstName[au]`
+- Strict count check against `strict_threshold` (1000)
+- Compound name quoting for names with spaces or hyphens
+- Incremental `mindate` filter already wired
 
-1. **sklearn is already a dependency.** `core/scoring.py` uses `IsotonicRegression` from sklearn and `StandardScaler`. The library is already in the container. Adding `roc_curve`, `auc`, `precision_recall_curve` requires zero new dependencies.
+**What is actually missing:**
 
-2. **Type safety on the hard part.** ROC/PR curves require careful handling of edge cases (all-same-label, threshold ordering, NaN guards). sklearn's implementations are battle-tested. Reimplementing in JavaScript adds bug surface with no gain.
+The `search_by_name()` result dict (`query_type`, `lenient_count`, `strict_count`) is logged but never persisted. The current `RetrievalLog` model only stores `last_retrieval_date` and `articles_found`.
 
-3. **Data volume.** The joined dataset (scores + curations) can be thousands of rows. Sending raw rows to the browser for client-side computation wastes bandwidth. Returning ~50 precomputed curve points is negligible.
+The `affiliation` parameter exists in `search_by_name()` but `_process_one_researcher()` never passes `core_identity.primary_institution` to it.
 
-4. **No charting library does metric computation.** Recharts, Chart.js, and Nivo are rendering libraries, not analytics libraries. They expect `[{x, y}]` data, not raw score arrays.
+**Integration path — `_process_one_researcher()` in pipeline_runner.py:**
 
-5. **Consistent with existing pattern.** The pipeline summary cards (`high_confidence`, `review_band`, `unlikely`) are already computed in Python at `/api/pipeline/status`. Stats follow the same pattern.
+```python
+# Current:
+search_result = search_by_name(
+    first_name=core_identity.first_name,
+    last_name=core_identity.last_name,
+    api_key=api_key or "",
+    lenient_threshold=lenient_threshold,
+    strict_threshold=strict_threshold,
+    mindate=mindate,
+)
+
+# Target (add affiliation, persist metadata):
+search_result = search_by_name(
+    first_name=core_identity.first_name,
+    last_name=core_identity.last_name,
+    affiliation=core_identity.primary_institution,   # NEW
+    api_key=api_key or "",
+    lenient_threshold=lenient_threshold,
+    strict_threshold=strict_threshold,
+    mindate=mindate,
+)
+# After DB commit of articles, also update retrieval_log:
+retrieval_log.query_type = search_result["query_type"]      # NEW
+retrieval_log.lenient_count = search_result["lenient_count"] # NEW
+retrieval_log.strict_count = search_result.get("strict_count") # NEW
+```
+
+Return dict from `_process_one_researcher()` should include `query_type` and `lenient_count` so the `complete_one` SSE event can report the strategy used. This costs nothing — just add keys to the existing return dict.
+
+**Schema change for `retrieval_log`:**
+
+```sql
+ALTER TABLE retrieval_log
+    ADD COLUMN query_type  ENUM('lenient', 'strict', 'skipped') DEFAULT NULL,
+    ADD COLUMN lenient_count INT DEFAULT NULL,
+    ADD COLUMN strict_count  INT DEFAULT NULL;
+```
+
+Additive, non-breaking. Existing rows keep NULL for the new columns.
 
 ---
 
-## API Contract
+### 2. Parallel Processing
 
-### Endpoint
+**Current behavior:** `run_pipeline()` submits all futures to the `ThreadPoolExecutor`, then awaits them in the original `person_ids` submission order. Researchers that finish early are held waiting until all earlier-submitted researchers complete.
+
+The specific code path (pipeline_runner.py lines 335–361):
+
+```python
+futures = {}
+for pid in person_ids:
+    future = loop.run_in_executor(executor, _process_one_researcher, ...)
+    futures[pid] = future
+    yield {"type": "queued", "person_id": pid}
+
+for pid in person_ids:          # <-- iterates in submission order
+    yield {"type": "processing", ...}
+    result = await futures[pid] # <-- blocks until THIS pid is done
+    yield {"type": "complete_one", ...}
+```
+
+**Target behavior — switch to `asyncio.as_completed`:**
+
+```python
+futures = {}
+for pid in person_ids:
+    future = loop.run_in_executor(executor, _process_one_researcher, ...)
+    futures[pid] = future
+    yield {"type": "queued", "person_id": pid}
+
+# Invert the map so we can look up person_id from the future object
+future_to_pid = {v: k for k, v in futures.items()}
+
+async for done_future in asyncio.as_completed(list(futures.values())):
+    pid = future_to_pid[done_future]
+    result = await done_future
+    completed += 1
+    yield {
+        "type": "complete_one",
+        "person_id": pid,
+        "completed": completed,
+        "total": total,
+        **result,
+    }
+```
+
+The `processing` event (one per researcher before they complete) needs reconsideration — with `as_completed`, there is no longer a predictable "now running" signal per researcher before it starts. The `queued` event already signals submission. The `complete_one` event signals completion. The `processing` event can be dropped or replaced with a generic "N researchers in flight" count on `started`.
+
+**Frontend safety:** The pipeline page frontend maps incoming SSE events by `person_id`, not position. Non-deterministic completion order is safe.
+
+**Worker count:** `MAX_WORKERS = min(4, os.cpu_count() or 2)` is already dynamic. Consider exposing as a config key (e.g., `pipeline.max_workers`) in `default_config.yaml` so power users can tune it.
+
+---
+
+### 3. Historical Pipeline Runs
+
+**Current state:** No `run_id` concept anywhere in the codebase. Each call to `/api/pipeline/run` upserts scores in `person_article_score` (update-if-exists). There is no record of when runs happened, how many researchers were included, or what mode was used.
+
+**New table (additive):**
+
+```sql
+CREATE TABLE pipeline_run (
+    run_id       INT AUTO_INCREMENT PRIMARY KEY,
+    started_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    completed_at TIMESTAMP NULL,
+    mode         ENUM('full', 'update', 'score_only') NOT NULL,
+    total_researchers INT DEFAULT 0,
+    scored_count INT DEFAULT 0,
+    status       ENUM('running', 'completed', 'failed') DEFAULT 'running'
+);
+```
+
+**Additive columns on existing tables (non-breaking — NULL = pre-v2.0):**
+
+```sql
+ALTER TABLE person_article_score
+    ADD COLUMN run_id INT NULL,
+    ADD INDEX idx_pas_run_id (run_id);
+
+ALTER TABLE retrieval_log
+    ADD COLUMN run_id INT NULL;
+```
+
+**Why not change the PersonArticleScore primary key:** The existing PK is `(person_id, pmid, model_type)`. Adding `run_id` to the PK would break the upsert semantics that `stats_service.py` and `scores.py` depend on. All queries that join or aggregate on `person_article_score` would require `GROUP BY` changes. Instead: keep the PK, add `run_id` as a nullable non-PK column. The upsert continues to overwrite the "current" score. Historical runs can be queried by filtering on `run_id`.
+
+**run_id flow through pipeline_runner.py:**
 
 ```
-GET /api/stats
+POST /api/pipeline/run
+  → run_pipeline() async generator
+      → INSERT INTO pipeline_run (mode, total_researchers, status='running')
+      → capture run_id from DB (use db.refresh() or LAST_INSERT_ID())
+      → yield {type: "started", run_id: run_id, total: N}
+      → pass run_id to _process_one_researcher()
+          → score upsert: set run_id = current run_id
+          → retrieval_log update: set run_id = current run_id
+          → return includes run_id in result dict
+      → after all complete:
+          → UPDATE pipeline_run SET completed_at=NOW(), status='completed',
+              scored_count=total_scored
+      → yield {type: "finished", run_id: run_id, completed: N}
 ```
 
-**Gate:** Returns `{"error": "no_curations"}` with HTTP 200 (not 404) if `COUNT(curation) = 0`. The frontend gate checks `curationCount > 0` before rendering the page at all, but defensive handling is good.
+**Run creation must happen in a thread, not directly in the async generator.** The `pipeline_run` INSERT is a DB write — it must use `loop.run_in_executor(None, ...)` or be done in a short synchronous preamble. See anti-patterns section.
 
-**Query parameter (optional):**
-```
-GET /api/stats?model_type=feedbackIdentity
-```
-Defaults to whichever model type is present. If both are present, prefer `feedbackIdentity` (the more powerful model). The response includes a `model_type` field so the frontend can display which model was used.
+**New API endpoints needed:**
 
-### Response Shape
+```
+GET /api/pipeline/runs
+    → list all pipeline_run rows, newest first
+    → response: [{run_id, started_at, completed_at, mode, total_researchers, scored_count, status}]
+
+GET /api/pipeline/runs/{run_id}
+    → single run detail
+```
+
+**`/api/pipeline/status` additions:**
 
 ```json
 {
-  "model_type": "feedbackIdentity",
-  "n_scored": 4821,
-  "n_curated": 1203,
-  "n_accepted": 891,
-  "n_rejected": 312,
-
-  "auc_roc": 0.9993,
-  "auc_pr": 0.9988,
-
-  "roc_curve": [
-    {"fpr": 0.0, "tpr": 0.0},
-    {"fpr": 0.0, "tpr": 0.42},
-    ...
-    {"fpr": 1.0, "tpr": 1.0}
-  ],
-
-  "pr_curve": [
-    {"recall": 0.0, "precision": 1.0},
-    ...
-    {"recall": 1.0, "precision": 0.47}
-  ],
-
-  "calibration_bins": [
-    {"bin_center": 5,  "fraction_positive": 0.03, "count": 142},
-    {"bin_center": 15, "fraction_positive": 0.14, "count": 88},
-    ...
-    {"bin_center": 95, "fraction_positive": 0.97, "count": 641}
-  ],
-
-  "score_distribution": [
-    {"bin_start": 0,  "bin_end": 10,  "accepted": 12, "rejected": 98,  "unreviewed": 301},
-    {"bin_start": 10, "bin_end": 20,  "accepted": 8,  "rejected": 41,  "unreviewed": 220},
-    ...
-    {"bin_start": 90, "bin_end": 100, "accepted": 644, "rejected": 3,  "unreviewed": 1823}
-  ],
-
-  "strongest_disagreements": [
-    {
-      "person_id": "jdoe",
-      "pmid": "38471029",
-      "score": 12,
-      "assertion": "ACCEPTED",
-      "title": "Myocardial infarction outcomes...",
-      "first_name": "Jane",
-      "last_name": "Doe"
-    }
-  ],
-
-  "benchmarks": {
-    "wcm_feedback_auc": 0.9993,
-    "wcm_identity_auc": 0.9776,
-    "fredh_feedback_auc": 0.9993
-  }
+  "last_run_id": 42,
+  "last_run_mode": "full",
+  "last_run_completed_at": "2026-04-05T14:22:00"
 }
 ```
 
-**Notes on curve downsampling:** sklearn's `roc_curve` can return thousands of threshold points. Downsample to ~200 points in the backend using numpy stride slicing before serializing. This keeps the JSON payload under 20KB.
+**WorkflowContext additions:**
 
-**Notes on calibration bins:** Use 10 equal-width bins over [0, 100] score range. `calibrated_score` in DB is stored as 0–1 float (see `scores.py` line 42 where it multiplies by 100 for display). Account for this: the backend should multiply by 100 before binning, or bin on the raw 0–1 float and label as percentages.
+```typescript
+interface WorkflowState {
+  // existing fields ...
+  lastRunId: number | null;       // NEW
+  lastRunMode: string | null;     // NEW
+}
+```
 
-**Notes on numpy type serialization:** sklearn/numpy return `numpy.float64` which FastAPI cannot serialize. Wrap all float values with `float()` before returning. Same pattern is already used in `pipeline_runner.py` lines 229–232.
+**Results and Stats scoping:** Add optional `run_id` query param to `GET /api/scores/{person_id}` and `GET /api/stats`. When `run_id` is omitted, behavior is unchanged (latest scores). When provided, filter to that run's scores.
 
-**Notes on strongest disagreements:** "Disagreement" = high score + REJECTED, or low score + ACCEPTED. Rank by `|score - assertion_threshold|`. Top 5 in the inline table; full list accessible via link to `/results?filter=disagreements` (or a simpler query param the results page can filter on).
+---
 
-### Benchmark Values (hardcoded, from PROJECT.md)
+### 4. Results Refinement (Search/Filter)
 
-These are known from validation publications and do not need to be fetched:
+**Current state:** `GET /api/scores/{person_id}` returns all scored articles, ordered by score descending. No server-side filtering. Client sorts by score/year/journal in JavaScript.
+
+**Extend the existing endpoint with optional query params:**
 
 ```python
-BENCHMARKS = {
-    "wcm_feedback_auc": 0.9993,
-    "wcm_identity_auc": 0.9776,
-    "fredh_feedback_auc": 0.9993,
-}
+@router.get("/{person_id}")
+def get_scores(
+    person_id: str,
+    q: str | None = Query(None),           # text search on title + journal
+    min_score: float | None = Query(None),
+    max_score: float | None = Query(None),
+    assertion: str | None = Query(None),   # ACCEPTED | REJECTED | none
+    run_id: int | None = Query(None),
+    db: Session = Depends(get_db),
+):
 ```
+
+All params are optional. When omitted, behavior is identical to today — backward-compatible.
+
+**Query construction additions:**
+
+```python
+if q:
+    query = query.filter(Article.title.ilike(f"%{q}%"))
+if min_score is not None:
+    query = query.filter(PersonArticleScore.calibrated_score >= min_score / 100)
+if max_score is not None:
+    query = query.filter(PersonArticleScore.calibrated_score <= max_score / 100)
+if assertion == "none":
+    query = query.filter(Curation.assertion == None)
+elif assertion in ("ACCEPTED", "REJECTED"):
+    query = query.filter(Curation.assertion == assertion)
+if run_id is not None:
+    query = query.filter(PersonArticleScore.run_id == run_id)
+```
+
+Note: `calibrated_score` in DB is stored as 0–1 float; the `min_score`/`max_score` params use 0–100 scale (same as the UI) and are divided by 100 before filtering.
+
+**Source labeling:** `PersonArticle.source` is `ENUM('upload', 'search')`. The scores endpoint's current query joins `PersonArticleScore + Article + Curation` but not `PersonArticle`. Add one more join:
+
+```python
+.outerjoin(PersonArticle, (PersonArticleScore.person_id == PersonArticle.person_id)
+                         & (PersonArticleScore.pmid == PersonArticle.pmid))
+```
+
+Add `"source": s.PersonArticle.source if s.PersonArticle else None` to the response dict.
+
+**Per-researcher export:** `GET /api/scores/export` already accepts `person_id`. Apply the same filter params. The existing CSV columns stay; add `source` as a new column.
+
+**Frontend changes in `[personId]/page.tsx`:** Add a search input and filter controls. On change, append params to the `apiFetch` call. Client-side sort remains client-side (sorting the already-fetched+filtered array).
 
 ---
 
-## Caching Strategy
+### 5. UI Polish Integration Points
 
-**Recommendation: No server-side caching. Recompute on every request.**
+**Institution name display:** Already fully wired. `workflow.tsx` reads `institution_label` from `/api/institution` and stores it as `state.institution: string | null`. Any component that calls `useWorkflow()` can display it. Work needed: identify the exact components (sidebar header, dashboard title, pipeline page) that should show it and add `{workflow.institution}` to their JSX.
 
-**Rationale:**
+**Last run type:** Not yet tracked. Requires `pipeline_run.mode` surfaced via `/api/pipeline/status` as `last_run_mode`. Then WorkflowContext exposes `lastRunMode`, and the pipeline page or dashboard can display "Last run: Full retrieval · 2026-04-04".
 
-- Stats are post-hoc (only called after pipeline completes). The user hits the stats page once or twice per pipeline run. Computation takes under 100ms for typical datasets (a few thousand joined rows). Caching adds complexity with no measurable benefit.
-- If a second pipeline run adds new curations, cached data would be stale. Cache invalidation on the stats endpoint requires hooking pipeline completion, which is disproportionate complexity for a rarely-called endpoint.
-- The pipeline completion page already calls `/api/pipeline/status` synchronously — stats can follow the same pattern.
+**SSE reconnection:** The `subscribeSSE()` utility in `frontend/lib/sse.ts` (or wherever it lives) does not appear to reconnect on network drop based on usage in `[personId]/page.tsx`. For the pipeline page (which runs for minutes), this is a real concern. Mitigation: wrap `EventSource` with a retry on `onerror` with exponential backoff, capped at 3 retries. The SSE `finished` event serves as the definitive termination signal.
 
-**What to NOT cache:**
-
-- Do not cache in the Next.js data layer (`fetch` with `cache: 'force-cache'`). Stats must reflect the current DB state.
-- Do not store computed stats in a new DB table. MariaDB query + sklearn computation on join results is fast enough.
-
-**What IS appropriate:**
-
-- React `useState` on the stats page. Fetch once on mount, store in component state. No refetch on tab focus or interval. User can manually refresh by navigating away and back.
-
----
-
-## Wiring into Post-Pipeline Flow
-
-The pipeline completion UI already has a "Next steps" section (pipeline/page.tsx lines 544–553). The "View Statistics" link appears conditionally there when curations exist.
-
-### Integration Points in Existing Code
-
-**1. `frontend/app/pipeline/page.tsx` — completion summary (MODIFIED)**
-
-Currently shows:
-```tsx
-<Link href="/results"><Button>View Results</Button></Link>
-```
-
-Add after that, conditionally:
-```tsx
-{hasCurations && (
-  <Link href="/stats"><Button variant="outline">View Statistics</Button></Link>
-)}
-```
-
-`hasCurations` is fetched from the API at the same time as `summary` (line 166–170). Add a parallel call to `/api/stats` or a lightweight `/api/curations/count` endpoint. Simpler: add `curation_count` to the existing `/api/pipeline/status` response.
-
-**2. `frontend/lib/workflow.tsx` — WorkflowState (MODIFIED)**
-
-Add `curationCount: number` to the state. Fetch from the same `/api/pipeline/status` endpoint (add `curation_count` field there) or from a dedicated `/api/curations/count`. This powers the sidebar gate.
-
-**3. `frontend/components/sidebar.tsx` — nav item (MODIFIED)**
-
-Add a "Statistics" item to `workflowItems`:
-```tsx
-{
-  href: "/stats",
-  label: "Statistics",
-  status: hasCurations ? (hasScores ? "complete" : "locked") : "locked",
-}
-```
-
-Gate: locked unless both `hasScores` and `hasCurations` are true.
-
-**4. `/api/pipeline/status` router (MODIFIED)**
-
-Add `curation_count` to the existing status response. One additional `db.query(Curation).count()` call. This is the least-friction way to propagate curation existence to the frontend without a new endpoint.
-
----
-
-## Recommended File Structure (New + Modified)
-
-```
-api/
-└── routers/
-    └── stats.py              # NEW — GET /api/stats
-
-frontend/
-└── app/
-    └── stats/
-        └── page.tsx          # NEW — stats page component
-```
-
-**Modified files:**
-- `api/routers/pipeline.py` — add `curation_count` to `/api/pipeline/status`
-- `frontend/lib/workflow.tsx` — add `curationCount` to WorkflowState
-- `frontend/components/sidebar.tsx` — add Statistics nav item
-- `frontend/app/pipeline/page.tsx` — add "View Statistics" link in completion summary
-
----
-
-## Charting Library Decision
-
-**Recommendation: Recharts.**
-
-No charting library is currently installed (confirmed from `package.json`). Recharts is the right choice for this stack because:
-
-1. It is the standard React charting library for App Router projects. Composable, declarative, integrates naturally with `"use client"` components.
-2. Required charts (`LineChart` for ROC/PR/calibration, `BarChart` for score distribution, `ResponsiveContainer`) are all first-class Recharts components.
-3. Reference lines (for WCM/Fred Hutch benchmarks on ROC/PR charts) are a built-in `<ReferenceLine>` component.
-4. Active community, maintained, compatible with React 18.
-
-**Install:**
-```bash
-npm install recharts
-```
-
-Do not install `@types/recharts` — Recharts ships its own TypeScript types since v2.
-
-**Alternatives considered and rejected:**
-
-- `Chart.js` + `react-chartjs-2`: Imperative API requires refs and canvas manipulation; worse DX in RSC-adjacent code.
-- `Nivo`: Excellent but large bundle, slower install, more opinionated styling that conflicts with Tailwind approach.
-- `Visx` (Airbnb): Low-level D3 wrapper, significant boilerplate for charts this team doesn't need to customize deeply.
-
----
-
-## Architectural Patterns
-
-### Pattern 1: Thin Client, Fat Backend (Apply Here)
-
-**What:** Backend does all data transformation, metric computation, and aggregation. Frontend receives ready-to-render data structures.
-**When to use:** When backend already has the right libraries (sklearn), when computation involves domain logic (ROC curve edge cases), when data is large relative to computed output.
-**Trade-offs:** Backend owns more logic; frontend is purely presentational. Harder to do client-side drill-downs, but stats page is aggregate-only.
-
-### Pattern 2: PrerequisiteGate for Stats Access
-
-**What:** Reuse the existing `PrerequisiteGate` component pattern on the stats page. Gate condition: `curationCount > 0 && scoreCount > 0`.
-**When to use:** All pages in this app that depend on prior workflow steps already use this pattern.
-**Trade-offs:** Consistent UX, no new component needed.
-
-```tsx
-<PrerequisiteGate
-  met={curationCount > 0 && scoreCount > 0}
-  message="Statistics require both scored articles and imported assertions."
-  actionLabel="Go to Researchers"
-  actionHref="/researchers"
->
-  {/* stats content */}
-</PrerequisiteGate>
-```
-
-### Pattern 3: Single Fetch on Mount, No Polling
-
-**What:** `useEffect` + `apiFetch` once on component mount. Stats are static post-pipeline. No SSE, no polling, no React Query.
-**When to use:** When data doesn't change while the user is on the page. The pipeline must be re-run to update stats; user navigates back to pipeline page to do that.
-**Trade-offs:** Stale if user runs pipeline in another tab, but that's an acceptable edge case for a local desktop app.
-
-```tsx
-const [stats, setStats] = useState<StatsResponse | null>(null);
-useEffect(() => {
-  apiFetch<StatsResponse>("/api/stats").then(setStats).catch(() => {});
-}, []);
-```
+**Dashboard metrics:** `/api/pipeline/status` already returns `high_confidence`, `review_band`, `unlikely`. These can be displayed on the dashboard (`/`) without any backend change — just wire them into the page component.
 
 ---
 
 ## Data Flow
 
-### Stats Request Flow
+### Pipeline Run with Historical Tracking
 
 ```
-User clicks "View Statistics" on pipeline completion page
-    ↓
-Navigate to /stats (Next.js App Router)
-    ↓
-stats/page.tsx mounts, useEffect fires
-    ↓
-apiFetch("http://localhost:8090/api/stats")
-    ↓
-FastAPI GET /api/stats
-    ↓
-SQLAlchemy JOIN person_article_score + curation ON (person_id, pmid)
-    (filter to most recent model_type per researcher)
-    ↓
-pandas DataFrame: columns [calibrated_score, assertion (0/1)]
-    ↓
-sklearn: roc_curve(), auc(), precision_recall_curve()
-numpy: histogram()
-pandas: groupby for disagreements
-    ↓
-Serialize to StatsResponse (all numpy.float64 → float())
-    ↓
-JSON response (~15KB)
-    ↓
-React state: setStats(data)
-    ↓
-Recharts renders ROC, PR, calibration, distribution charts
+POST /api/pipeline/run {mode: "full", person_ids: [...]}
+  ↓
+pipeline_runner.run_pipeline(person_ids, mode)
+  ↓ [in thread] INSERT INTO pipeline_run → run_id=42
+  ↓ yield {type: "started", run_id: 42, total: N}
+  ↓
+  ThreadPoolExecutor (MAX_WORKERS threads)
+  ↓
+  _process_one_researcher(pid, mode, config, model_dir, run_id=42)
+    ↓ search_by_name(first, last, affiliation, ...)
+    ↓   → {pmids, query_type, lenient_count, strict_count}
+    ↓ fetch_articles(new_pmids)
+    ↓ INSERT/UPDATE article, person_article
+    ↓ UPDATE retrieval_log SET run_id=42, query_type=..., lenient_count=...
+    ↓ compute_features() → feature_rows
+    ↓ score_articles() → scored_df
+    ↓ UPSERT person_article_score SET run_id=42
+    ↓ return {person_id, article_count, scored_count, query_type, ...}
+  ↓
+  asyncio.as_completed() → yield {type: "complete_one", person_id, ...} as each finishes
+  ↓
+  [in thread] UPDATE pipeline_run SET completed_at=NOW(), status='completed', scored_count=N
+  ↓
+  yield {type: "finished", run_id: 42, completed: N}
 ```
 
-### Gate Check Flow
+### Results Page with Run Selector
 
 ```
-WorkflowProvider loads on app mount
-    ↓
-GET /api/pipeline/status → { ..., curation_count: 47 }
-    ↓
-WorkflowContext.curationCount = 47
-    ↓
-Sidebar: Statistics item → status "next" (not locked)
-Pipeline completion: "View Statistics" button → visible
-Stats page: PrerequisiteGate met=true → renders
+User selects run_id=42 from dropdown (or uses default "latest")
+  ↓
+GET /api/scores/{personId}?run_id=42&min_score=50&q=cancer
+  ↓
+scores.py: filter PersonArticleScore WHERE run_id=42
+  ↓
+return [{pmid, score, source, assertion, ...}]
+  ↓
+Frontend renders filtered list, client-side sort applied on top
+```
+
+### Stats Scoped to a Run
+
+```
+GET /api/stats?run_id=42
+  ↓
+stats_service.compute_stats(db, run_id=42)
+  ↓ JOIN person_article_score + curation WHERE score.run_id=42
+  ↓ same computation pipeline (roc, calibration, pr, distribution)
+  ↓ return identical response shape with run_id in metadata
 ```
 
 ---
 
-## Anti-Patterns
+## New vs Modified Components
 
-### Anti-Pattern 1: Computing Metrics in JavaScript
+### New (no existing code to change)
 
-**What people do:** Send raw score/assertion arrays to the browser, compute ROC curve in a custom JS function.
-**Why it's wrong:** sklearn handles edge cases (single class, ties in scores, threshold ordering) that are non-obvious to reimplement correctly. AUC calculation via trapezoidal integration has numeric precision issues in floating point. The backend already has sklearn.
-**Do this instead:** Compute in Python, send `[{fpr, tpr}]` arrays to the browser.
+| Component | Type | Purpose |
+|-----------|------|---------|
+| `api/models.py::PipelineRun` | SQLAlchemy model | New `pipeline_run` table |
+| `api/routers/pipeline.py::GET /runs` | Endpoint | List historical runs |
+| `api/routers/pipeline.py::GET /runs/{run_id}` | Endpoint | Single run detail |
+| Schema migration block | DDL | `pipeline_run` table + nullable `run_id` columns |
+| `frontend/app/results/components/RunSelector.tsx` | React component | Run selector dropdown |
+| `frontend/app/results/components/SearchFilter.tsx` | React component | Search + filter bar |
 
-### Anti-Pattern 2: New `curation_count` Endpoint
+### Modified (changes to existing files)
 
-**What people do:** Create `GET /api/curations/count` as a new endpoint just to check the gate.
-**Why it's wrong:** The `WorkflowProvider` already calls `/api/pipeline/status` on every page load. Adding a second API call for a single integer wastes a round-trip and adds a new endpoint to maintain.
-**Do this instead:** Add `curation_count` to the existing `/api/pipeline/status` response. One line: `db.query(Curation).count()`.
-
-### Anti-Pattern 3: Caching Stats in a New DB Table
-
-**What people do:** After pipeline completes, write computed stats to a `pipeline_stats` table and serve from there.
-**Why it's wrong:** Adds a write step to the pipeline, requires cache invalidation logic, and the query + sklearn computation is fast enough (< 100ms) to not warrant it.
-**Do this instead:** Compute on demand from the live join. If performance becomes an issue at >50K curations (unlikely for this tool's target users), revisit.
-
-### Anti-Pattern 4: Strongest Disagreements as a Separate Endpoint
-
-**What people do:** Create a second endpoint `GET /api/stats/disagreements` for the inline table and the "View all" link.
-**Why it's wrong:** All disagreement data comes from the same join. Computing it in one pass alongside the other metrics is cheaper than two trips to the DB.
-**Do this instead:** Include `strongest_disagreements` (top 5, with all fields needed for display) in the main `/api/stats` response. For "View all", pass a query param to the existing `/results` page: `/results?personId=&disagreements=true`.
-
-### Anti-Pattern 5: Chart Components as Server Components
-
-**What people do:** Mark the stats page or chart wrapper as a React Server Component to avoid `"use client"`.
-**Why it's wrong:** Recharts requires browser APIs (ResizeObserver for ResponsiveContainer). All chart components must be inside a `"use client"` boundary. Every other page in this app is `"use client"` already; the stats page should follow the same pattern.
-**Do this instead:** `"use client"` at the top of `stats/page.tsx`. No special wrapping needed.
-
----
-
-## Integration Points
-
-### Existing Code Touched
-
-| File | Change Type | What Changes |
-|------|-------------|--------------|
-| `api/routers/pipeline.py` | Add field | `curation_count` added to `/api/pipeline/status` response body |
-| `api/main.py` | Add router | `include_router(stats.router)` — 1 line |
-| `frontend/lib/workflow.tsx` | Add field | `curationCount: number` in WorkflowState + fetch from status |
-| `frontend/components/sidebar.tsx` | Add nav item | Statistics entry with curation gate |
-| `frontend/app/pipeline/page.tsx` | Add CTA link | "View Statistics" button in pipelineFinished summary block |
-
-### New Code Added
-
-| File | What It Is |
-|------|------------|
-| `api/routers/stats.py` | FastAPI router with single GET endpoint, sklearn metric computation |
-| `frontend/app/stats/page.tsx` | Client component: fetch + Recharts charts + disagreements table |
-
-### External Boundaries
-
-| Boundary | Communication | Notes |
-|----------|---------------|-------|
-| Next.js → FastAPI | `apiFetch()` via `NEXT_PUBLIC_API_URL` | Same pattern as all other pages |
-| FastAPI → MariaDB | SQLAlchemy ORM JOIN query | Same `get_db` dependency injection |
-| FastAPI → sklearn | Direct function call | No HTTP; same process |
-| Sidebar → WorkflowContext | React Context (`useWorkflow()`) | `curationCount` added to existing context |
+| Component | Change | Risk |
+|-----------|--------|------|
+| `api/models.py` | Add `PipelineRun` model; add nullable `run_id` to `PersonArticleScore` + `RetrievalLog`; add retrieval metadata columns to `RetrievalLog` | Low — additive only |
+| `api/schema.sql` | Mirror model changes in DDL | Low |
+| `api/services/pipeline_runner.py` | Create `pipeline_run` on start; pass `run_id` to thread func; switch to `asyncio.as_completed`; update `pipeline_run` on completion | Medium — changes SSE event order |
+| `core/pubmed.py` | No code change — caller change only | Low |
+| `api/routers/scores.py::GET /{person_id}` | Add `q`, `min_score`, `max_score`, `assertion`, `run_id` params; join `PersonArticle` for source | Low — all params optional |
+| `api/routers/scores.py::GET /export` | Same filter params; add `source` column to CSV | Low |
+| `api/routers/pipeline.py::GET /status` | Add `last_run_id`, `last_run_mode`, `last_run_completed_at` | Low — additive |
+| `api/services/stats_service.py::compute_stats` | Add optional `run_id` param to scope JOIN | Low — None = existing behavior |
+| `frontend/lib/workflow.tsx` | Add `lastRunId`, `lastRunMode` to WorkflowState | Low — additive |
+| `frontend/app/results/[personId]/page.tsx` | Add `SearchFilter` + `RunSelector` components, source badge | Medium — UI logic addition |
+| `frontend/app/stats/page.tsx` | Add run selector, pass `run_id` to stats fetch | Low |
 
 ---
 
 ## Suggested Build Order
 
-Dependencies flow strictly in this order. Each step unblocks the next.
+```
+Phase 1: Schema Foundation
+    ↓ (unblocks run_id wiring everywhere)
+Phase 3: Historical Runs (API + pipeline_runner.py)
+    ↓                  ↓
+Phase 4:           Phase 5:
+Results Refinement Stats Scoping + UI Polish
 
-1. **`api/routers/pipeline.py` — add `curation_count` to status response**
-   Unblocks: WorkflowProvider change, sidebar gate, pipeline page CTA visibility.
+Phase 2a: Retrieval Parity (independent — just needs schema Phase 1 for persisting metadata)
+Phase 2b: Parallel Processing (fully independent)
+```
 
-2. **`api/routers/stats.py` — new stats endpoint**
-   Unblocks: frontend stats page. Can be built and tested with `curl` independently.
+### Phase 1: Schema Foundation
 
-3. **`frontend/lib/workflow.tsx` — add `curationCount`**
-   Unblocks: sidebar gate condition, PrerequisiteGate on stats page.
+Add `pipeline_run` table. Add nullable `run_id` to `person_article_score` and `retrieval_log`. Add `query_type`, `lenient_count`, `strict_count` columns to `retrieval_log`. Update `api/models.py` and `api/schema.sql`.
 
-4. **`frontend/components/sidebar.tsx` — add Statistics nav item**
-   Unblocks: user navigation to stats page.
+No behavior change at this phase — all new columns are nullable. Existing code continues to work without modification.
 
-5. **`npm install recharts` in frontend/**
-   Unblocks: chart rendering in stats page.
+### Phase 2a: Retrieval Parity (depends on Phase 1 for persistence)
 
-6. **`frontend/app/stats/page.tsx` — stats page**
-   Final step. Depends on all of the above.
+In `_process_one_researcher()`: pass `affiliation=core_identity.primary_institution` to `search_by_name()`. After the DB commit for articles, update `retrieval_log` with `query_type`, `lenient_count`, `strict_count`. Add these fields to the return dict so the `complete_one` SSE event reports the strategy used.
 
-7. **`frontend/app/pipeline/page.tsx` — add "View Statistics" CTA**
-   Independent of step 6, can be done alongside it. Cosmetic integration only.
+### Phase 2b: Parallel Processing (independent)
+
+Switch `run_pipeline()` from submission-order await to `asyncio.as_completed`. Test SSE event ordering on the pipeline page frontend. Drop or redesign the `processing` event. Consider exposing `MAX_WORKERS` in `default_config.yaml`.
+
+### Phase 3: Historical Runs (depends on Phase 1)
+
+Create `PipelineRun` SQLAlchemy model. Wire `run_id` creation at pipeline start (in a thread, not the async generator body). Pass `run_id` into `_process_one_researcher()`. Update `pipeline_run` on completion. Add `GET /api/pipeline/runs` and `GET /api/pipeline/runs/{run_id}` endpoints. Update `/api/pipeline/status` to include last run metadata. Update `WorkflowContext`.
+
+### Phase 4: Results Refinement (filter params independent; run_id param depends on Phase 3)
+
+Extend `GET /api/scores/{person_id}` with filter query params. Add `PersonArticle` join for `source`. Extend export. Build `SearchFilter` and `RunSelector` React components. Wire into results page.
+
+### Phase 5: Stats Scoping + UI Polish (run_id param depends on Phase 3; polish items independent)
+
+Add optional `run_id` param to `compute_stats()`. Add run selector to stats page. Implement institution name display (zero backend work — already in WorkflowContext). Add reconnection logic to SSE utility. Wire `high_confidence`/`review_band`/`unlikely` into dashboard.
+
+---
+
+## Anti-Patterns to Avoid
+
+### Anti-Pattern 1: Adding run_id to the PersonArticleScore Primary Key
+
+**What people do:** Change `PRIMARY KEY (person_id, pmid, model_type)` to include `run_id` for true historical snapshots.
+
+**Why it's wrong:** Every pipeline run inserts new rows instead of updating. Stats queries that join `PersonArticleScore + Curation` return duplicate rows per researcher unless rewritten with `DISTINCT` or `GROUP BY`. `stats_service.py`, `scores.py`, and `pipeline_runner.py` all rely on the upsert behavior. Row count grows unboundedly — a 50-researcher, 2000-article dataset generates 100K rows per run.
+
+**Do this instead:** Keep the PK intact. Add `run_id` as a nullable non-PK column with an index. Upsert continues to overwrite the current score while tagging it with the latest `run_id`. Historical comparison queries filter on the `run_id` column.
+
+### Anti-Pattern 2: Blocking DB Writes Inside the Async Generator
+
+**What people do:** Call synchronous SQLAlchemy writes directly inside `run_pipeline()` (the async generator function) to create the `pipeline_run` record.
+
+**Why it's wrong:** The async generator body runs on the event loop. Any synchronous blocking DB call in the generator body blocks the event loop and stalls all other async work, including the SSE response being streamed to the client.
+
+**Do this instead:** Wrap the `pipeline_run` INSERT in `loop.run_in_executor(None, _create_run_record, mode, total)` and `await` it before the first yield. The `_process_one_researcher()` thread function (already synchronous) is the correct place for all heavy DB work.
+
+### Anti-Pattern 3: Client-Side Text Search on the Full Article List
+
+**What people do:** Fetch all scored articles for a researcher and filter by title keyword in JavaScript.
+
+**Why it's wrong:** Researchers with 2000+ articles cause visible lag on filter keystrokes. The SHAP features JSON compounds the payload size significantly.
+
+**Do this instead:** Use the server-side `q` query param for title/journal text search. `LIKE %q%` on `Article.title` is fast at desktop scale (hundreds to low thousands of articles per researcher). Client-side sort on the already-filtered result set is fine.
+
+### Anti-Pattern 4: Overloading RetrievalLog as a Run Registry
+
+**What people do:** Add `total_researchers`, `mode`, and `status` fields to `retrieval_log` to avoid creating the `pipeline_run` table.
+
+**Why it's wrong:** `retrieval_log` is keyed on `person_id` — one row per researcher. It is physically incapable of storing run-level aggregates (total across all researchers, completion status, run mode) without violating its purpose. Adding a `run_id` FK to link a retrieval event back to a run is correct use of the table. Using it as the run registry itself is not.
+
+**Do this instead:** Create the `pipeline_run` table for run-level metadata. `retrieval_log` gets a `run_id` FK column pointing to it.
+
+### Anti-Pattern 5: Removing the processing Event Without Frontend Update
+
+**What people do:** Drop the `processing` SSE event when switching to `asyncio.as_completed` without updating the pipeline page frontend.
+
+**Why it's wrong:** If the pipeline page renders researcher rows in `processing` state and waits for `complete_one` to update them, removing `processing` will leave rows stuck in an indeterminate state for fast researchers that complete before slower ones emit their event.
+
+**Do this instead:** Audit the pipeline page event handling before dropping `processing`. Options: keep the event (emit it immediately before submitting the future), or replace it with a `started` aggregate count, or remove it and rely only on `queued` + `complete_one`.
+
+---
+
+## Scaling Considerations
+
+This is a local desktop application. Scaling is not a concern beyond the following practical limits.
+
+| Scenario | Recommendation |
+|----------|---------------|
+| 1–50 researchers | Current architecture with v2.0 changes is sufficient |
+| 50–500 researchers | Increase `MAX_WORKERS` via config; rate limiter handles PubMed |
+| 500+ researchers | Would require persistent task queue (Celery/RQ) — out of scope |
+
+The one practical concern is `person_article_score` row count as runs accumulate under the nullable `run_id` approach. Since scores are upserted (not inserted per run), row count stays bounded by `(researchers × articles_per_researcher × model_types)` regardless of run count. This is not a growth concern.
 
 ---
 
 ## Sources
 
-- Direct inspection: `api/models.py`, `api/routers/pipeline.py`, `api/routers/scores.py`, `api/services/pipeline_runner.py`
-- Direct inspection: `frontend/app/pipeline/page.tsx`, `frontend/components/sidebar.tsx`, `frontend/lib/workflow.tsx`, `frontend/lib/api.ts`, `frontend/package.json`
-- Direct inspection: `.planning/PROJECT.md`
-- sklearn docs: `roc_curve`, `precision_recall_curve`, `auc` — HIGH confidence (standard API, unchanged for years)
-- Recharts docs: https://recharts.org — MEDIUM confidence (verify install command and `ResponsiveContainer` API on current version)
+- Direct inspection: `core/pubmed.py` — retrieval strategy confirmed complete and correct
+- Direct inspection: `api/services/pipeline_runner.py` lines 335–361 — submission-order await pattern confirmed
+- Direct inspection: `api/models.py` and `api/schema.sql` — 6 tables, no `run_id`, confirmed
+- Direct inspection: `api/routers/scores.py` — no filter query params exist today, confirmed
+- Direct inspection: `api/routers/pipeline.py` — SSE StreamingResponse pattern, confirmed
+- Direct inspection: `frontend/lib/workflow.tsx` — WorkflowState fields, `institution` already present
+- Direct inspection: `frontend/app/results/[personId]/page.tsx` — client-side sort only, confirmed
+- Direct inspection: `api/services/stats_service.py` — not run-scoped, confirmed
+- Direct inspection: `.planning/PROJECT.md` — milestone feature list confirmed
 
 ---
-*Architecture research for: ReCiter Desktop v1.1 Statistics & Validation page*
-*Researched: 2026-04-04*
+
+*Architecture research for: ReCiter Desktop v2.0 Pipeline Parity & Performance*
+*Researched: 2026-04-05*
