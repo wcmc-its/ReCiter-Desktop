@@ -67,7 +67,7 @@ Plans:
 
 </details>
 
-### 🚧 v2.0 Pipeline Parity & Performance (In Progress)
+### v2.0 Pipeline Parity & Performance (In Progress)
 
 **Milestone Goal:** Make ReCiter Desktop's retrieval and scoring pipeline match ReCiter's exact behavior, suitable for validating accuracy claims in the paper.
 
@@ -88,7 +88,11 @@ Plans:
   2. `person_article_score` and `retrieval_log` rows carry a nullable `run_id` column; existing scores from before the migration appear as run #1
   3. When four or more researchers are scored in parallel, the pipeline UI shows researchers finishing out of submission order (completion order), not one at a time
   4. With a PubMed API key configured, the pipeline uses 8 parallel workers; without one, it uses 3 workers
-**Plans**: TBD
+**Plans:** 2 plans
+
+Plans:
+- [ ] 04-01-PLAN.md — Alembic setup + PipelineRun model + run_id columns + migrations
+- [ ] 04-02-PLAN.md — Pipeline as_completed refactor + adaptive workers + frontend update
 
 ### Phase 5: Retrieval Strategy Parity
 **Goal**: PubMed retrieval behavior matches Java ReCiter for affiliation filtering, compound/special names, known-PMID workflows, update mode date tracking, and non-ASCII name handling
@@ -100,7 +104,7 @@ Plans:
   3. Researchers uploaded via PMID import have their full PubMed XML fetched before scoring, so their scored article list reflects the actual publications rather than zero results
   4. Running the pipeline twice on the same researcher in `update` mode retrieves only articles published after the first run's retrieval date; the second run does not duplicate articles already in the database
   5. An `update` mode end-to-end integration test passes with a known researcher on a second run without returning zero articles or crashing
-  6. Researcher names containing apostrophes (O'Brien), Unicode diacritics (López), or brackets produce valid PubMed queries that return results
+  6. Researcher names containing apostrophes (O'Brien), Unicode diacritics (Lopez), or brackets produce valid PubMed queries that return results
 **Plans**: TBD
 
 ### Phase 6: Historical Pipeline Runs
@@ -144,7 +148,7 @@ Plans:
 | 1. Backend Stats Endpoint | v1.1 | 3/3 | Complete | 2026-04-04 |
 | 2. Workflow Wiring and Navigation | v1.1 | 2/2 | Complete | 2026-04-05 |
 | 3. Stats Page Frontend | v1.1 | TBD | Complete | 2026-04-05 |
-| 4. Schema Foundation + Parallel Processing | v2.0 | 0/TBD | Not started | - |
+| 4. Schema Foundation + Parallel Processing | v2.0 | 0/2 | Planning | - |
 | 5. Retrieval Strategy Parity | v2.0 | 0/TBD | Not started | - |
 | 6. Historical Pipeline Runs | v2.0 | 0/TBD | Not started | - |
 | 7. Results Refinement | v2.0 | 0/TBD | Not started | - |
