@@ -1,15 +1,15 @@
 ---
 gsd_state_version: 1.0
-milestone: v2.0
-milestone_name: Pipeline Parity & Performance
-status: executing
-stopped_at: Phase 4 context gathered
-last_updated: "2026-04-06T12:22:40.987Z"
-last_activity: 2026-04-06 -- Phase 04 execution started
+milestone: v2.1
+milestone_name: "Retrieve & Score — UX, Bugs & Robustness"
+status: planning
+stopped_at: Milestone initialized; Phase 9 ready to plan
+last_updated: "2026-04-06T16:20:00.000Z"
+last_activity: 2026-04-06 -- Milestone v2.1 started; requirements and roadmap already defined (phases 9-11)
 progress:
-  total_phases: 5
+  total_phases: 3
   completed_phases: 0
-  total_plans: 2
+  total_plans: 0
   completed_plans: 0
   percent: 0
 ---
@@ -25,12 +25,15 @@ See: .planning/PROJECT.md (updated 2026-04-05)
 
 ## Current Position
 
-Phase: 04 (schema-foundation-parallel-processing) — EXECUTING
-Plan: 1 of 2
-Status: Executing Phase 04
-Last activity: 2026-04-06 -- Phase 04 execution started
+Milestone: v2.1 — Retrieve & Score: UX, Bugs & Robustness
+Phase: 09 (parallel-write-race-fix) — READY TO PLAN
+Plan: —
+Status: Defining phase 9; requirements PIPE-01–07, FMT-01, DB-01 defined; phases 9-11 roadmapped
+Last activity: 2026-04-06 -- Milestone v2.1 initialized
 
 Progress: [░░░░░░░░░░] 0%
+
+Note: v2.0 phases 5-8 (retrieval parity, historical runs, results refinement, UI polish) remain on the roadmap and will be executed after v2.1 ships.
 
 ## Performance Metrics
 
@@ -61,13 +64,11 @@ None yet.
 
 ### Blockers/Concerns
 
-- Phase 4 first task: verify `retrieval_log` DDL exists in `schema.sql` before writing any new code (known pre-existing gap)
-- Phase 4: `run_id` migration to `person_article_score` must be atomic — test on a populated DB copy before applying
+- SQLAlchemy OperationalError 1020 (concurrent score writes) — generic-name researchers trigger race condition on `person_article_score`; fix is `INSERT ... ON DUPLICATE KEY UPDATE` or `no_autoflush` — captured in v2.1
 - Phase 5: `AffiliationInDbRetrievalStrategy` — decide single string vs. list for `CoreIdentity.institutions` before coding affiliation search
-- Phase 5: audit `frontend/app/pipeline/page.tsx` for `processing` SSE event dependency before removing it in `asyncio.as_completed` switch
 
 ## Session Continuity
 
-Last session: 2026-04-06T04:21:02.561Z
-Stopped at: Phase 4 context gathered
-Resume file: .planning/phases/04-schema-foundation-parallel-processing/04-CONTEXT.md
+Last session: 2026-04-06T16:20:00.000Z
+Stopped at: Milestone v2.1 initialized; next action is plan Phase 9
+Resume file: none

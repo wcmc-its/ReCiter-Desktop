@@ -19,7 +19,7 @@ An institution can go from researcher list to scored publications in minutes, us
 - Results Page Refinement: search/filter, per-researcher export, source labeling
 - UI Polish: institution name display, last run type, reconnection, dashboard metrics
 
-## Planned Milestone: v2.1 Retrieve & Score — UX, Bugs & Robustness
+## Current Milestone: v2.1 Retrieve & Score — UX, Bugs & Robustness
 
 **Goal:** Fix critical bugs on the pipeline page, polish visual consistency, and add reliability improvements.
 
@@ -115,4 +115,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-04-06 after milestone v2.1 defined*
+*Last updated: 2026-04-06 after milestone v2.1 started*
