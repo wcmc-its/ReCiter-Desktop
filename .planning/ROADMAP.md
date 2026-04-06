@@ -3,7 +3,8 @@
 ## Milestones
 
 - ✅ **v1.0 Core Pipeline** - Phases 1-N (shipped 2026-04-04)
-- 🚧 **v1.1 Statistics & Validation View** - Phases 1-3 (in progress)
+- ✅ **v1.1 Statistics & Validation View** - Phases 1-3 (shipped 2026-04-05)
+- 🚧 **v2.0 Pipeline Parity & Performance** - Phases 4-8 (in progress)
 
 ## Phases
 
@@ -14,15 +15,10 @@ What shipped: Docker Compose app (Next.js + FastAPI + MariaDB), institution setu
 
 </details>
 
-### 🚧 v1.1 Statistics & Validation View (In Progress)
+<details>
+<summary>✅ v1.1 Statistics & Validation View — SHIPPED 2026-04-05</summary>
 
-**Milestone Goal:** Show pipeline scoring quality after a run using gold-standard assertions, benchmarked against WCM and Fred Hutch.
-
-- [x] **Phase 1: Backend Stats Endpoint** - Compute ROC, calibration, PR, score distribution, and disagreements server-side (completed 2026-04-04)
-- [ ] **Phase 2: Workflow Wiring and Navigation** - Gate stats page, add sidebar entry, add pipeline completion CTA
-- [ ] **Phase 3: Stats Page Frontend** - Charts, benchmark overlays, disagreements table
-
-## Phase Details
+What shipped: Backend stats endpoint (ROC/AUC with bootstrap CI, calibration, PR curve, score distribution, disagreements), Stats page frontend (4 Recharts charts, metric cards, disagreements table), workflow wiring (sidebar entry with prerequisite gate, pipeline completion CTA).
 
 ### Phase 1: Backend Stats Endpoint
 **Goal**: The `/api/stats` endpoint exists, returns statistically correct chart data for all four visualizations, and exposes viability flags that prevent misleading output
@@ -50,11 +46,11 @@ Plans:
   1. Sidebar shows a "Statistics" item that is locked with a prerequisite message when no (score, assertion) joined pairs exist in the database, and unlocked otherwise
   2. Pipeline completion page displays a "View Statistics" CTA link when assertions exist; the link is absent when no assertions exist
   3. Navigating to `/stats` when the gate is not met shows the prerequisite gate UI; navigating when it is met renders the stats page
-**Plans:** 2 plans
+**Plans:** 2/2 plans complete
 
 Plans:
 - [x] 02-01-PLAN.md — Backend assertion_count field + WorkflowContext extension
-- [ ] 02-02-PLAN.md — Sidebar entry, pipeline CTA, /stats route with gate
+- [x] 02-02-PLAN.md — Sidebar entry, pipeline CTA, /stats route with gate
 
 ### Phase 3: Stats Page Frontend
 **Goal**: Users can view four charts, benchmark reference lines, and a strongest-disagreements table on a single stats page that accurately represents their pipeline run quality
@@ -69,10 +65,87 @@ Plans:
 **Plans**: TBD
 **UI hint**: yes
 
+</details>
+
+### 🚧 v2.0 Pipeline Parity & Performance (In Progress)
+
+**Milestone Goal:** Make ReCiter Desktop's retrieval and scoring pipeline match ReCiter's exact behavior, suitable for validating accuracy claims in the paper.
+
+- [ ] **Phase 4: Schema Foundation + Parallel Processing** - Add pipeline_run table, nullable run_id columns, and fix asyncio completion ordering
+- [ ] **Phase 5: Retrieval Strategy Parity** - Implement affiliation search, compound name detection, retrieve_known mode, update mode fix, and name quoting hardening
+- [ ] **Phase 6: Historical Pipeline Runs** - Wire run_id through pipeline, expose run list API, add run selector on Results and Stats pages
+- [ ] **Phase 7: Results Refinement** - Add search/filter bar, per-researcher export, and source labeling to Results page
+- [ ] **Phase 8: Stats Scoping + UI Polish** - Scope stats to run_id, add SSE reconnect, institution name display, last run type badge, and dashboard metrics
+
+## Phase Details
+
+### Phase 4: Schema Foundation + Parallel Processing
+**Goal**: The database schema has a `pipeline_run` table and nullable `run_id` FKs on score and retrieval tables, and the pipeline UI shows researchers completing in true arrival order
+**Depends on**: Phase 3
+**Requirements**: PARA-01, PARA-02, HIST-01, HIST-02
+**Success Criteria** (what must be TRUE):
+  1. A `pipeline_run` table exists in the database with columns for run_id, mode, status, timestamps, and article/researcher counts; existing installations can upgrade without losing data
+  2. `person_article_score` and `retrieval_log` rows carry a nullable `run_id` column; existing scores from before the migration appear as run #1
+  3. When four or more researchers are scored in parallel, the pipeline UI shows researchers finishing out of submission order (completion order), not one at a time
+  4. With a PubMed API key configured, the pipeline uses 8 parallel workers; without one, it uses 3 workers
+**Plans**: TBD
+
+### Phase 5: Retrieval Strategy Parity
+**Goal**: PubMed retrieval behavior matches Java ReCiter for affiliation filtering, compound/special names, known-PMID workflows, update mode date tracking, and non-ASCII name handling
+**Depends on**: Phase 4
+**Requirements**: RETR-01, RETR-02, RETR-03, RETR-04, RETR-05, RETR-06
+**Success Criteria** (what must be TRUE):
+  1. A researcher with a common name whose lenient result count exceeds 2000 automatically receives an affiliation-filtered PubMed search using institution keywords from config; the Pipeline page shows which strategy was used
+  2. A researcher with a hyphenated or multi-word last name (e.g., "Garcia Lopez") is detected before retrieval and run in strict-only mode, avoiding noisy lenient results
+  3. Researchers uploaded via PMID import have their full PubMed XML fetched before scoring, so their scored article list reflects the actual publications rather than zero results
+  4. Running the pipeline twice on the same researcher in `update` mode retrieves only articles published after the first run's retrieval date; the second run does not duplicate articles already in the database
+  5. An `update` mode end-to-end integration test passes with a known researcher on a second run without returning zero articles or crashing
+  6. Researcher names containing apostrophes (O'Brien), Unicode diacritics (López), or brackets produce valid PubMed queries that return results
+**Plans**: TBD
+
+### Phase 6: Historical Pipeline Runs
+**Goal**: Every pipeline execution creates a persistent run record, and users can scope Results and Stats to a specific historical run via a dropdown selector
+**Depends on**: Phase 4
+**Requirements**: HIST-03, HIST-04
+**Success Criteria** (what must be TRUE):
+  1. `GET /api/pipeline/runs` returns a list of all past runs with run_id, mode, status, start time, and article/researcher counts
+  2. The Results page has a run selector dropdown that scopes the researcher listing and article scores to the selected run; switching runs updates the displayed data without a full page reload
+  3. The Stats page has a run selector dropdown that recomputes all statistics (ROC, calibration, PR, score distribution, disagreements) scoped to the selected run
+**Plans**: TBD
+**UI hint**: yes
+
+### Phase 7: Results Refinement
+**Goal**: Users can search and filter the Results listing, download a single researcher's results as a CSV, and see whether each article came from a candidate search or a known PMID upload
+**Depends on**: Phase 6
+**Requirements**: RSLT-01, RSLT-02, RSLT-03
+**Success Criteria** (what must be TRUE):
+  1. The Results page search bar filters the researcher listing by name in real time; a score range filter narrows results to only researchers with articles scoring in the selected range — both filters operate server-side without keystroke lag at 2000+ articles
+  2. Each researcher row on the Results listing has an export button that downloads a CSV containing only that researcher's scored articles
+  3. The article detail view for each researcher shows a "Candidate Search" or "Known Upload" label per article indicating how it entered the system
+**Plans**: TBD
+**UI hint**: yes
+
+### Phase 8: Stats Scoping + UI Polish
+**Goal**: Statistics are scoped to specific pipeline runs, the pipeline recovers gracefully from page reloads, and the app surface reflects real institution identity and run context throughout
+**Depends on**: Phase 6
+**Requirements**: UIPOL-01, UIPOL-02, UIPOL-03, UIPOL-04
+**Success Criteria** (what must be TRUE):
+  1. The Setup page stores and displays the institution's original name as entered (e.g., "Weill Cornell Medicine"), not a reconstructed keyword string; the sidebar header shows this name
+  2. The Pipeline page completed-researchers table shows the run type (full, update, retrieve_known) used for each researcher in the most recent run
+  3. Reloading the browser during an active pipeline run reconnects the SSE stream with exponential backoff (up to 3 retries); in-progress researcher rows restore their prior state rather than resetting to blank
+  4. The Dashboard shows total researchers, total scored articles, date of last pipeline run, and overall AUC (when assertions exist)
+**Plans**: TBD
+**UI hint**: yes
+
 ## Progress
 
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
-| 1. Backend Stats Endpoint | v1.1 | 3/3 | Complete   | 2026-04-04 |
-| 2. Workflow Wiring and Navigation | v1.1 | 0/2 | In progress | - |
-| 3. Stats Page Frontend | v1.1 | 0/TBD | Not started | - |
+| 1. Backend Stats Endpoint | v1.1 | 3/3 | Complete | 2026-04-04 |
+| 2. Workflow Wiring and Navigation | v1.1 | 2/2 | Complete | 2026-04-05 |
+| 3. Stats Page Frontend | v1.1 | TBD | Complete | 2026-04-05 |
+| 4. Schema Foundation + Parallel Processing | v2.0 | 0/TBD | Not started | - |
+| 5. Retrieval Strategy Parity | v2.0 | 0/TBD | Not started | - |
+| 6. Historical Pipeline Runs | v2.0 | 0/TBD | Not started | - |
+| 7. Results Refinement | v2.0 | 0/TBD | Not started | - |
+| 8. Stats Scoping + UI Polish | v2.0 | 0/TBD | Not started | - |

@@ -76,31 +76,31 @@ Deferred to future release. Tracked but not in current roadmap.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| RETR-01 | TBD | Pending |
-| RETR-02 | TBD | Pending |
-| RETR-03 | TBD | Pending |
-| RETR-04 | TBD | Pending |
-| RETR-05 | TBD | Pending |
-| RETR-06 | TBD | Pending |
-| PARA-01 | TBD | Pending |
-| PARA-02 | TBD | Pending |
-| HIST-01 | TBD | Pending |
-| HIST-02 | TBD | Pending |
-| HIST-03 | TBD | Pending |
-| HIST-04 | TBD | Pending |
-| RSLT-01 | TBD | Pending |
-| RSLT-02 | TBD | Pending |
-| RSLT-03 | TBD | Pending |
-| UIPOL-01 | TBD | Pending |
-| UIPOL-02 | TBD | Pending |
-| UIPOL-03 | TBD | Pending |
-| UIPOL-04 | TBD | Pending |
+| RETR-01 | Phase 5 | Pending |
+| RETR-02 | Phase 5 | Pending |
+| RETR-03 | Phase 5 | Pending |
+| RETR-04 | Phase 5 | Pending |
+| RETR-05 | Phase 5 | Pending |
+| RETR-06 | Phase 5 | Pending |
+| PARA-01 | Phase 4 | Pending |
+| PARA-02 | Phase 4 | Pending |
+| HIST-01 | Phase 4 | Pending |
+| HIST-02 | Phase 4 | Pending |
+| HIST-03 | Phase 6 | Pending |
+| HIST-04 | Phase 6 | Pending |
+| RSLT-01 | Phase 7 | Pending |
+| RSLT-02 | Phase 7 | Pending |
+| RSLT-03 | Phase 7 | Pending |
+| UIPOL-01 | Phase 8 | Pending |
+| UIPOL-02 | Phase 8 | Pending |
+| UIPOL-03 | Phase 8 | Pending |
+| UIPOL-04 | Phase 8 | Pending |
 
 **Coverage:**
 - v2.0 requirements: 19 total
-- Mapped to phases: 0
-- Unmapped: 19
+- Mapped to phases: 19
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-04-05*
-*Last updated: 2026-04-05 after initial definition*
+*Last updated: 2026-04-05 — all 19 requirements mapped to Phases 4-8*
