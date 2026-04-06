@@ -158,6 +158,11 @@ Plans:
   1. Running the pipeline with 8 parallel workers against a researcher set large enough to produce concurrent writes completes without any SQLAlchemy autoflush errors or MariaDB error 1020 in the backend logs
   2. All scored articles are present in `person_article_score` after a parallel run — no records silently dropped due to session conflicts
   3. The fix does not regress single-worker pipeline runs or change any observable scoring output
+**Plans:** 2 plans
+
+Plans:
+- [ ] 09-01-PLAN.md — Wave 0: Test infrastructure (pytest.ini, pytest-asyncio, RED-state upsert test stubs)
+- [ ] 09-02-PLAN.md — Wave 1: Replace SELECT+INSERT loops with INSERT ... ON DUPLICATE KEY UPDATE
 
 ### Phase 10: Pipeline Page Polish + Number Formatting
 **Goal**: The pipeline page presents accurate copy, correct visual behavior, and consistent number formatting throughout the application
@@ -197,6 +202,6 @@ Plans:
 | 6. Historical Pipeline Runs | v2.0 | 0/TBD | Not started | - |
 | 7. Results Refinement | v2.0 | 0/TBD | Not started | - |
 | 8. Stats Scoping + UI Polish | v2.0 | 0/TBD | Not started | - |
-| 9. Parallel Write Race Condition Fix | v2.1 | 0/TBD | Not started | - |
+| 9. Parallel Write Race Condition Fix | v2.1 | 0/2 | Planning | - |
 | 10. Pipeline Page Polish + Number Formatting | v2.1 | 0/TBD | Not started | - |
 | 11. SSE Reconnection + Cancel | v2.1 | 0/TBD | Not started | - |
