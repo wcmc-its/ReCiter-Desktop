@@ -56,7 +56,7 @@ All sizes are drawn from the existing pipeline page and pipeline-row codebase. P
 | Page heading | 24px (`text-2xl`) | 600 (`font-semibold`) | 1.2 | `<h2>` on pipeline page | `pipeline/page.tsx` line 276 |
 | Body / description | 14px (`text-sm`) | 400 | 1.5 | Subtitle paragraph, tab content descriptions | `pipeline/page.tsx` lines 278, 311 |
 | Label / cell content | 12px (`text-xs`) | 400 | 1.5 | UID cell, article count cell, status label (after fix), progress stats, ETA, log entries | `pipeline-row.tsx` line 137; fix per D-07 |
-| Column header | 10px (`text-[10px]`) | 500 (`tracking-wider uppercase`) | n/a | Column header row ("Researcher", "UID", "Articles", "Status", "Progress") | `pipeline/page.tsx` line 402 |
+| Column header | 10px (`text-[10px]`) | 400 (`tracking-wider uppercase`) | n/a | Column header row ("Researcher", "UID", "Articles", "Status", "Progress") | `pipeline/page.tsx` line 402 |
 
 **Typography change this phase:**
 - `pipeline-row.tsx` line 139: `text-sm` → `text-xs` on the status label `<span>`. This aligns the status cell (12px) with the UID cell (`text-xs`, 12px) and article count cell (`text-sm text-gray-500`). Column headers remain at `text-[10px]` — intentionally smaller as uppercase tracking labels.
