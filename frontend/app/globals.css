@@ -129,3 +129,24 @@
     text-wrap: balance;
   }
 }
+
+.pipeline-progress-animated {
+  background-color: #3b82f6;
+  background-image: repeating-linear-gradient(
+    45deg,
+    rgba(255, 255, 255, 0.18) 25%,
+    transparent 25%,
+    transparent 50%,
+    rgba(255, 255, 255, 0.18) 50%,
+    rgba(255, 255, 255, 0.18) 75%,
+    transparent 75%,
+    transparent
+  );
+  background-size: 40px 40px;
+  animation: pipeline-stripe 1s linear infinite;
+}
+
+@keyframes pipeline-stripe {
+  from { background-position: 0 0; }
+  to   { background-position: 40px 0; }
+}
