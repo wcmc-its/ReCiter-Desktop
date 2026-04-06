@@ -5,6 +5,24 @@ from sqlalchemy.sql import func
 from api.database import Base
 
 
+class PipelineRun(Base):
+    __tablename__ = "pipeline_run"
+    run_id = Column(Integer, autoincrement=True, primary_key=True)
+    mode = Column(Enum("full", "update", "score_only"), nullable=False)
+    status = Column(
+        Enum("PENDING", "RUNNING", "COMPLETED", "PARTIAL", "FAILED"),
+        nullable=False,
+        server_default="PENDING",
+    )
+    total_researchers = Column(Integer, nullable=False, server_default="0")
+    total_articles = Column(Integer, nullable=False, server_default="0")
+    researchers_succeeded = Column(Integer, nullable=False, server_default="0")
+    researchers_failed = Column(Integer, nullable=False, server_default="0")
+    started_at = Column(TIMESTAMP, nullable=True)
+    completed_at = Column(TIMESTAMP, nullable=True)
+    created_at = Column(TIMESTAMP, server_default=func.now())
+
+
 class Institution(Base):
     __tablename__ = "institution"
     config_key = Column(String(255), primary_key=True)
@@ -59,6 +77,7 @@ class RetrievalLog(Base):
     person_id = Column(String(128), ForeignKey("identity.person_id", ondelete="CASCADE"), primary_key=True)
     last_retrieval_date = Column(TIMESTAMP, server_default=func.now(), onupdate=func.now())
     articles_found = Column(Integer, default=0)
+    run_id = Column(Integer, ForeignKey("pipeline_run.run_id", ondelete="SET NULL"), nullable=True)
 
 
 class PersonArticleScore(Base):
@@ -70,6 +89,7 @@ class PersonArticleScore(Base):
     calibrated_score = Column(Float)
     features = Column(JSON)
     scored_at = Column(TIMESTAMP, server_default=func.now())
+    run_id = Column(Integer, ForeignKey("pipeline_run.run_id", ondelete="SET NULL"), nullable=True)
 
 
 class Curation(Base):
