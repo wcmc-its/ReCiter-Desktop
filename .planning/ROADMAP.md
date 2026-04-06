@@ -5,6 +5,7 @@
 - ✅ **v1.0 Core Pipeline** - Phases 1-N (shipped 2026-04-04)
 - ✅ **v1.1 Statistics & Validation View** - Phases 1-3 (shipped 2026-04-05)
 - 🚧 **v2.0 Pipeline Parity & Performance** - Phases 4-8 (in progress)
+- 📋 **v2.1 Retrieve & Score — UX, Bugs & Robustness** - Phases 9-11 (planned)
 
 ## Phases
 
@@ -77,6 +78,14 @@ Plans:
 - [ ] **Phase 7: Results Refinement** - Add search/filter bar, per-researcher export, and source labeling to Results page
 - [ ] **Phase 8: Stats Scoping + UI Polish** - Scope stats to run_id, add SSE reconnect, institution name display, last run type badge, and dashboard metrics
 
+### v2.1 Retrieve & Score — UX, Bugs & Robustness (Planned)
+
+**Milestone Goal:** Fix critical bugs on the pipeline page, polish visual consistency, and add reliability improvements.
+
+- [ ] **Phase 9: Parallel Write Race Condition Fix** - Eliminate SQLAlchemy autoflush race condition errors in concurrent pipeline workers
+- [ ] **Phase 10: Pipeline Page Polish + Number Formatting** - Correct pipeline page copy, fix ETA countdown, animation direction, font/alignment, and status logic; apply comma formatting app-wide
+- [ ] **Phase 11: SSE Reconnection + Cancel** - Add reliable pipeline state restoration on navigation return and a graceful cancel button for active runs
+
 ## Phase Details
 
 ### Phase 4: Schema Foundation + Parallel Processing
@@ -91,7 +100,7 @@ Plans:
 **Plans:** 2 plans
 
 Plans:
-- [ ] 04-01-PLAN.md — Alembic setup + PipelineRun model + run_id columns + migrations
+- [x] 04-01-PLAN.md — Alembic setup + PipelineRun model + run_id columns + migrations
 - [ ] 04-02-PLAN.md — Pipeline as_completed refactor + adaptive workers + frontend update
 
 ### Phase 5: Retrieval Strategy Parity
@@ -141,6 +150,41 @@ Plans:
 **Plans**: TBD
 **UI hint**: yes
 
+### Phase 9: Parallel Write Race Condition Fix
+**Goal**: Concurrent pipeline workers write scores to the database without triggering SQLAlchemy autoflush errors or MariaDB stale-record failures
+**Depends on**: Phase 8
+**Requirements**: DB-01
+**Success Criteria** (what must be TRUE):
+  1. Running the pipeline with 8 parallel workers against a researcher set large enough to produce concurrent writes completes without any SQLAlchemy autoflush errors or MariaDB error 1020 in the backend logs
+  2. All scored articles are present in `person_article_score` after a parallel run — no records silently dropped due to session conflicts
+  3. The fix does not regress single-worker pipeline runs or change any observable scoring output
+
+### Phase 10: Pipeline Page Polish + Number Formatting
+**Goal**: The pipeline page presents accurate copy, correct visual behavior, and consistent number formatting throughout the application
+**Depends on**: Phase 9
+**Requirements**: PIPE-01, PIPE-02, PIPE-03, PIPE-04, PIPE-05, FMT-01
+**Success Criteria** (what must be TRUE):
+  1. The pipeline page heading reads "Retrieve & Score" and the subtitle accurately describes the operation; the previous incorrect copy is no longer visible anywhere on the page
+  2. The ETA display counts down as researchers complete — each completion updates the estimate based on actual throughput; the timer does not count up or freeze
+  3. The progress bar animation moves in the correct direction (left to right); no visual regression on already-correct rows
+  4. Status text in pipeline rows ("Retrieving from PubMed", "Scoring") uses the same font size as column headers and aligns with them; no misaligned or oversized status labels remain
+  5. "Taking longer than usual" appears only in the row of a researcher whose elapsed time exceeds the expected duration — not statically pre-populated in every last-column cell at pipeline start
+  6. All numeric values at or above 1,000 display with comma separators throughout the application (pipeline page article counts, results page counts, stats page counts, dashboard metrics)
+**Plans**: TBD
+**UI hint**: yes
+
+### Phase 11: SSE Reconnection + Cancel
+**Goal**: Users can navigate away from and return to an active pipeline run without losing progress, and can cancel a run in flight
+**Depends on**: Phase 10
+**Requirements**: PIPE-06, PIPE-07
+**Success Criteria** (what must be TRUE):
+  1. Navigating away from the pipeline page during an active run and returning reconnects to the SSE stream; all researcher rows that completed while the user was away render with their completed state, and in-progress rows resume their animated state
+  2. The pipeline page shows a Cancel button while a run is active; clicking it stops all in-progress workers gracefully (no orphaned processes) and marks the run as cancelled in the database
+  3. After a cancellation, the pipeline page shows the partial results for researchers that did complete before cancellation, and the Cancel button disappears
+  4. SSE reconnection survives at least one browser tab hide/show cycle (e.g., switching to another tab and returning) without requiring a full page reload
+**Plans**: TBD
+**UI hint**: yes
+
 ## Progress
 
 | Phase | Milestone | Plans Complete | Status | Completed |
@@ -153,3 +197,6 @@ Plans:
 | 6. Historical Pipeline Runs | v2.0 | 0/TBD | Not started | - |
 | 7. Results Refinement | v2.0 | 0/TBD | Not started | - |
 | 8. Stats Scoping + UI Polish | v2.0 | 0/TBD | Not started | - |
+| 9. Parallel Write Race Condition Fix | v2.1 | 0/TBD | Not started | - |
+| 10. Pipeline Page Polish + Number Formatting | v2.1 | 0/TBD | Not started | - |
+| 11. SSE Reconnection + Cancel | v2.1 | 0/TBD | Not started | - |

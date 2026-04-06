@@ -117,17 +117,26 @@ Deferred to future release. Tracked but not in current roadmap.
 | UIPOL-02 | Phase 8 | Pending |
 | UIPOL-03 | Phase 8 | Pending |
 | UIPOL-04 | Phase 8 | Pending |
+| DB-01 | Phase 9 | Pending |
+| PIPE-01 | Phase 10 | Pending |
+| PIPE-02 | Phase 10 | Pending |
+| PIPE-03 | Phase 10 | Pending |
+| PIPE-04 | Phase 10 | Pending |
+| PIPE-05 | Phase 10 | Pending |
+| FMT-01 | Phase 10 | Pending |
+| PIPE-06 | Phase 11 | Pending |
+| PIPE-07 | Phase 11 | Pending |
 
 **Coverage:**
 - v2.0 requirements: 19 total
 - Mapped to phases: 19
 - Unmapped: 0 ✓
 
-**v2.1 coverage (pending roadmap):**
+**v2.1 coverage:**
 - v2.1 requirements: 9 total
-- Mapped to phases: 0 (roadmap TBD)
-- Unmapped: 9 ⚠️
+- Mapped to phases: 9
+- Unmapped: 0 ✓
 
 ---
 *Requirements defined: 2026-04-05*
-*Last updated: 2026-04-06 — v2.1 requirements added (9 items, phases TBD)*
+*Last updated: 2026-04-06 — v2.1 requirements mapped to phases 9-11*
