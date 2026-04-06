@@ -19,6 +19,20 @@ An institution can go from researcher list to scored publications in minutes, us
 - Results Page Refinement: search/filter, per-researcher export, source labeling
 - UI Polish: institution name display, last run type, reconnection, dashboard metrics
 
+## Planned Milestone: v2.1 Retrieve & Score — UX, Bugs & Robustness
+
+**Goal:** Fix critical bugs on the pipeline page, polish visual consistency, and add reliability improvements.
+
+**Target features:**
+- Pipeline page heading and subtitle copy corrected
+- ETA countdown fixed (counts down, not up)
+- Progress animation direction and font/alignment inconsistencies fixed
+- "Taking longer than usual" status logic corrected
+- SSE reconnection: navigate away + return restores state (builds on v2.0 UIPOL-03)
+- Cancel button for active pipeline runs
+- Number comma formatting for values ≥ 1,000 app-wide
+- SQLAlchemy race condition fix for concurrent `person_article_score` writes
+
 ## Requirements
 
 ### Validated
@@ -42,6 +56,13 @@ An institution can go from researcher list to scored publications in minutes, us
 - [ ] Historical pipeline runs: run table, run selector, comparison view
 - [ ] Results page refinement: search/filter, per-researcher export, source labeling
 - [ ] UI polish: institution name display, last run type, reconnection, dashboard metrics
+- [ ] Pipeline page copy: heading "Retrieve & Score", subtitle corrected — v2.1
+- [ ] ETA countdown fix, animation direction fix, font/alignment consistency — v2.1
+- [ ] "Taking longer than usual" status logic corrected — v2.1
+- [ ] SSE reconnection: navigate away + return restores state — v2.1
+- [ ] Cancel button for active pipeline runs — v2.1
+- [ ] Number comma formatting for values ≥ 1,000 app-wide — v2.1
+- [ ] SQLAlchemy race condition fix on concurrent `person_article_score` writes — v2.1
 
 ### Out of Scope
 
@@ -94,4 +115,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-04-05 after milestone v2.0 started*
+*Last updated: 2026-04-06 after milestone v2.1 defined*

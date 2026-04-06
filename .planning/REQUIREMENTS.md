@@ -41,6 +41,28 @@ Requirements for Pipeline Parity & Performance milestone. Each maps to roadmap p
 - [ ] **UIPOL-03**: SSE reconnection with exponential backoff recovers pipeline progress on page reload
 - [ ] **UIPOL-04**: Dashboard shows key metrics (total researchers, articles, last run date, overall AUC)
 
+## v2.1 Requirements
+
+Requirements for Retrieve & Score — UX, Bugs & Robustness milestone. Each maps to roadmap phases 9+.
+
+### Pipeline Page
+
+- [ ] **PIPE-01**: Pipeline page heading reads "Retrieve & Score" with subtitle "Retrieve articles and compute authorship likelihood scores for each researcher's candidate articles"
+- [ ] **PIPE-02**: ETA display decreases over time as researchers complete; estimate recalculated from actual completion times
+- [ ] **PIPE-03**: Pipeline row progress animation moves in the correct direction
+- [ ] **PIPE-04**: Status text in pipeline rows ("Retrieving from PubMed", "Taking longer than usual") uses consistent font size and aligns with column headers
+- [ ] **PIPE-05**: "Taking longer than usual" status appears only when a researcher's elapsed time exceeds expected duration — not statically in every last-column cell
+- [ ] **PIPE-06**: Navigating away from the pipeline page and returning reconnects to the running SSE stream and restores all in-progress row states (builds on UIPOL-03)
+- [ ] **PIPE-07**: User can cancel an active pipeline run via a Cancel button; in-progress workers stop gracefully and the run is marked cancelled
+
+### Formatting
+
+- [ ] **FMT-01**: All numeric values ≥ 1,000 display with commas throughout the application (e.g., 1,143 not 1143)
+
+### Data Integrity
+
+- [ ] **DB-01**: Concurrent parallel workers writing scores to `person_article_score` do not produce SQLAlchemy autoflush race condition errors (MariaDB error 1020 / stale record)
+
 ## Future Requirements
 
 Deferred to future release. Tracked but not in current roadmap.
@@ -99,8 +121,13 @@ Deferred to future release. Tracked but not in current roadmap.
 **Coverage:**
 - v2.0 requirements: 19 total
 - Mapped to phases: 19
-- Unmapped: 0
+- Unmapped: 0 ✓
+
+**v2.1 coverage (pending roadmap):**
+- v2.1 requirements: 9 total
+- Mapped to phases: 0 (roadmap TBD)
+- Unmapped: 9 ⚠️
 
 ---
 *Requirements defined: 2026-04-05*
-*Last updated: 2026-04-05 — all 19 requirements mapped to Phases 4-8*
+*Last updated: 2026-04-06 — v2.1 requirements added (9 items, phases TBD)*
