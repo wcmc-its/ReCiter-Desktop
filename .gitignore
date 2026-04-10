@@ -46,3 +46,8 @@ api/*.pyc
 
 # Brainstorming artifacts
 .superpowers/
+
+# Claude Code local artifacts
+CLAUDE.md
+CLAUDE.local.md
+.claude/
