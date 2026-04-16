@@ -150,3 +150,18 @@
   from { background-position: 0 0; }
   to   { background-position: 40px 0; }
 }
+
+@keyframes step-enter {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-step-enter {
+  animation: step-enter 0.35s ease-out both;
+}

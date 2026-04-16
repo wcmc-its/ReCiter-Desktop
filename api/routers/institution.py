@@ -27,6 +27,7 @@ class ConfigureRequest(BaseModel):
     institutions: list[InstitutionClassification]
     email_domains: list[str]
     institution_label: str
+    pubmed_api_key: str | None = None
 
 
 @router.post("/discover")
@@ -59,6 +60,9 @@ def configure(req: ConfigureRequest, db: Session = Depends(get_db)):
         "collaborating_institution_keywords": json.dumps(collab_keywords),
     }
 
+    if req.pubmed_api_key:
+        config_pairs["pubmed_api_key"] = req.pubmed_api_key
+
     for key, value in config_pairs.items():
         existing = db.query(Institution).filter_by(config_key=key).first()
         if existing:
@@ -76,6 +80,21 @@ def get_pubmed_api_key(db: Session) -> str:
     if row and row.config_value:
         return row.config_value
     return os.environ.get("PUBMED_API_KEY", "")
+
+
+class ApiKeyRequest(BaseModel):
+    pubmed_api_key: str = ""
+
+
+@router.put("/api-key")
+def update_api_key(req: ApiKeyRequest, db: Session = Depends(get_db)):
+    existing = db.query(Institution).filter_by(config_key="pubmed_api_key").first()
+    if existing:
+        existing.config_value = req.pubmed_api_key
+    else:
+        db.add(Institution(config_key="pubmed_api_key", config_value=req.pubmed_api_key))
+    db.commit()
+    return {"status": "ok"}
 
 
 @router.get("")

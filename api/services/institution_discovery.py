@@ -75,7 +75,7 @@ def pubmed_search(domain: str, year_range: str | None = None,
     params = {
         "db": "pubmed",
         "term": query,
-        "retmax": 500,
+        "retmax": 4000,
         "retmode": "json",
     }
     if api_key:
@@ -133,7 +133,30 @@ async def discover_institution(
         return
 
     yield {"type": "status", "message": "Analyzing affiliations..."}
-    affiliations = pubmed_fetch_affiliations(pmids, api_key)
+
+    affiliations: list[str] = []
+    batch_size = 100
+    for i in range(0, len(pmids), batch_size):
+        batch = pmids[i : i + batch_size]
+        params: dict = {
+            "db": "pubmed",
+            "id": ",".join(batch),
+            "rettype": "xml",
+            "retmode": "xml",
+        }
+        if api_key:
+            params["api_key"] = api_key
+        resp = requests.get(PUBMED_EFETCH, params=params, timeout=60)
+        resp.raise_for_status()
+        root = ElementTree.fromstring(resp.text)
+        for article in root.findall(".//PubmedArticle"):
+            for author in article.findall(".//Author"):
+                for aff in author.findall(".//Affiliation"):
+                    if aff.text:
+                        affiliations.append(aff.text)
+        if i + batch_size < len(pmids):
+            time.sleep(0.4)
+        yield {"type": "affiliation_count", "count": len(affiliations)}
 
     email_domains = extract_email_domains(affiliations)
     yield {
