@@ -28,7 +28,7 @@ export default function Dashboard() {
     nextDescription = "Add your faculty roster to start finding their publications.";
   } else if (hasResearchers && !hasScores) {
     nextHref = "/pipeline";
-    nextLabel = "Run Pipeline";
+    nextLabel = "Retrieve & Score";
     nextDescription = "Retrieve articles and compute authorship likelihood scores.";
   } else if (hasScores) {
     nextHref = "/results";
@@ -126,7 +126,7 @@ export default function Dashboard() {
             researcher.{" "}
             {hasScores ? (
               <>
-                Your scores are based on identity evidence (42 features).
+                Your scores are based on identity evidence (47 features).
                 Importing accept/reject curation data activates a more powerful
                 72-feature model that reduces manual review from 18% to 2.3% of
                 articles.

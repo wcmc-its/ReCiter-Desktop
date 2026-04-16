@@ -29,8 +29,8 @@ export default function ResultsPage() {
   return (
     <PrerequisiteGate
       met={scoreCount > 0}
-      message="No results yet. Run the pipeline first to score articles."
-      actionLabel="Go to Pipeline"
+      message="No results yet. Retrieve and score articles first."
+      actionLabel="Go to Retrieve & Score"
       actionHref="/pipeline"
     >
     <div className="max-w-4xl">
@@ -77,7 +77,7 @@ export default function ResultsPage() {
         ))}
         {scored.length === 0 && (
           <div className="px-4 py-8 text-center text-gray-400">
-            No results yet. Go to the Pipeline page to retrieve and score articles for your researchers.
+            No results yet. Retrieve and score articles for your researchers first.
           </div>
         )}
       </div>

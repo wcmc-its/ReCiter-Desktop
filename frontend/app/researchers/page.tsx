@@ -1,8 +1,9 @@
 // frontend/app/researchers/page.tsx
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { FileUpload } from "@/components/file-upload";
@@ -10,6 +11,21 @@ import { ColumnMapper } from "@/components/column-mapper";
 import { apiUpload, apiFetch } from "@/lib/api";
 import { PrerequisiteGate } from "@/components/prerequisite-gate";
 import { useWorkflow } from "@/lib/workflow";
+
+interface Researcher {
+  person_id: string;
+  first_name: string;
+  last_name: string;
+  middle_name: string;
+  primary_email: string;
+  primary_institution: string;
+  department: string;
+  title: string;
+  orcid: string;
+  doctoral_year: number;
+  article_count: number;
+  score_count: number;
+}
 
 interface MappingRow {
   original: string;
@@ -30,7 +46,10 @@ interface UploadResult {
 
 export default function ResearchersPage() {
   const router = useRouter();
-  const { institution, refresh } = useWorkflow();
+  const { institution, researcherCount, refresh } = useWorkflow();
+  const [researchers, setResearchers] = useState<Researcher[] | null>(null);
+  const [profileResearcher, setProfileResearcher] = useState<Researcher | null>(null);
+  const [replacing, setReplacing] = useState(false);
   const [uploadResult, setUploadResult] = useState<UploadResult | null>(null);
   const [mappings, setMappings] = useState<MappingRow[]>([]);
   const [importGoldStandard, setImportGoldStandard] = useState(true);
@@ -39,6 +58,12 @@ export default function ResearchersPage() {
     identity_count: number;
     curation_count: number;
   } | null>(null);
+
+  useEffect(() => {
+    if (researcherCount > 0 && !replacing && !importResult) {
+      apiFetch<Researcher[]>("/api/researchers").then(setResearchers);
+    }
+  }, [researcherCount, replacing, importResult]);
 
   async function handleFile(file: File) {
     const result = await apiUpload<UploadResult>("/api/researchers/upload", file);
@@ -94,10 +119,176 @@ export default function ResearchersPage() {
               className="mt-4 bg-[#cf4520] hover:bg-[#a3381a] text-white"
               onClick={() => router.push("/pipeline")}
             >
-              Continue to Pipeline
+              Continue to Retrieve & Score
             </Button>
           </CardContent>
         </Card>
+      </div>
+    );
+  }
+
+  // Existing researchers view
+  if (researcherCount > 0 && !replacing && !importResult) {
+    return (
+      <div className="max-w-3xl">
+        <div className="flex items-center justify-between mb-6">
+          <div>
+            <h2 className="text-2xl font-semibold text-gray-900">Researchers</h2>
+            <p className="text-gray-500 mt-1">{researcherCount} researcher{researcherCount !== 1 ? "s" : ""} loaded</p>
+          </div>
+          <Button
+            variant="outline"
+            onClick={() => setReplacing(true)}
+          >
+            Replace roster
+          </Button>
+        </div>
+
+        {researchers === null ? (
+          <p className="text-sm text-gray-400">Loading...</p>
+        ) : (() => {
+          const signals = ["primary_email", "middle_name", "department", "primary_institution", "orcid", "doctoral_year"] as const;
+          const signalLabel: Record<string, string> = {
+            primary_email: "Email",
+            middle_name: "Middle Name",
+            department: "Department",
+            primary_institution: "Institution",
+            orcid: "ORCID",
+            doctoral_year: "Year",
+          };
+          const totalSignals = researchers.length * signals.length;
+          const filledSignals = researchers.reduce((sum, r) =>
+            sum + signals.filter((s) => s === "doctoral_year" ? r[s] > 0 : !!r[s]).length, 0
+          );
+          const completeness = totalSignals > 0 ? Math.round((filledSignals / totalSignals) * 100) : 0;
+
+          return (
+            <>
+              <div className="flex items-center gap-3 mb-4 text-xs text-gray-500">
+                <span>Identity completeness:</span>
+                <div className="w-32 h-1.5 rounded bg-gray-200 overflow-hidden">
+                  <div
+                    className={`h-full rounded ${completeness >= 60 ? "bg-green-400" : completeness >= 30 ? "bg-amber-400" : "bg-red-400"}`}
+                    style={{ width: `${completeness}%` }}
+                  />
+                </div>
+                <span className="font-medium text-gray-700">{completeness}%</span>
+                <span className="text-gray-400">({filledSignals} of {totalSignals} fields populated)</span>
+              </div>
+              <p className="text-xs text-gray-400 mb-1">Scoring is accurate even with partial identity data. Additional fields improve precision but are not required.</p>
+              <div className="border border-gray-200 rounded-lg overflow-hidden shadow-sm overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="bg-gray-50 text-[10px] font-medium text-gray-500 uppercase tracking-wider">
+                      <th className="text-left px-4 py-2 whitespace-nowrap">Name</th>
+                      <th className="text-left px-3 py-2 whitespace-nowrap">Person ID</th>
+                      {signals.map((s) => (
+                        <th key={s} className="text-center px-2 py-2 whitespace-nowrap">{signalLabel[s]}</th>
+                      ))}
+                      <th className="px-3 py-2" />
+                    </tr>
+                  </thead>
+                  <tbody>
+                {researchers.map((r) => (
+                  <tr
+                    key={r.person_id}
+                    className="border-t border-gray-100 text-gray-700 hover:bg-gray-50 transition-colors"
+                  >
+                    <td className="px-4 py-2 font-medium whitespace-nowrap">{r.last_name}, {r.first_name}</td>
+                    <td className="px-3 py-2 text-gray-400 font-mono text-xs whitespace-nowrap">{r.person_id}</td>
+                    {signals.map((s) => {
+                      const has = s === "doctoral_year" ? r[s] > 0 : !!r[s];
+                      return (
+                        <td key={s} className="text-center px-2 py-2" title={has ? String(r[s]) : "Missing"}>
+                          {has ? (
+                            <span className="text-green-500 text-xs">✓</span>
+                          ) : (
+                            <span className="text-gray-300 text-xs">—</span>
+                          )}
+                        </td>
+                      );
+                    })}
+                    <td className="px-3 py-2">
+                      <span className="flex gap-2 justify-end whitespace-nowrap">
+                      <button
+                        onClick={() => setProfileResearcher(r)}
+                        className="text-[11px] px-2 py-1 rounded border border-gray-200 text-gray-600 hover:bg-gray-100 transition-colors"
+                      >
+                        Profile
+                      </button>
+                      {r.score_count > 0 ? (
+                        <Link
+                          href={`/results/${r.person_id}`}
+                          className="text-[11px] px-2 py-1 rounded border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 transition-colors"
+                        >
+                          Results
+                        </Link>
+                      ) : (
+                        <span className="text-[11px] px-2 py-1 rounded border border-gray-100 text-gray-300 cursor-default">
+                          Results
+                        </span>
+                      )}
+                    </span>
+                    </td>
+                  </tr>
+                ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          );
+        })()}
+
+        {/* Profile modal */}
+        {profileResearcher && (
+          <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center" onClick={() => setProfileResearcher(null)}>
+            <div className="bg-white rounded-lg shadow-xl w-full max-w-md mx-4" onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-center justify-between px-5 pt-5 pb-3 border-b border-gray-200">
+                <h3 className="text-lg font-semibold text-gray-900">
+                  {profileResearcher.first_name} {profileResearcher.last_name}
+                </h3>
+                <button onClick={() => setProfileResearcher(null)} className="text-gray-400 hover:text-gray-600 text-lg">✕</button>
+              </div>
+              <div className="px-5 py-4 space-y-3">
+                {([
+                  ["Person ID", profileResearcher.person_id],
+                  ["First Name", profileResearcher.first_name],
+                  ["Last Name", profileResearcher.last_name],
+                  ["Middle Name", profileResearcher.middle_name],
+                  ["Email", profileResearcher.primary_email],
+                  ["Institution", profileResearcher.primary_institution],
+                  ["Department", profileResearcher.department],
+                  ["Title", profileResearcher.title],
+                  ["ORCID", profileResearcher.orcid],
+                  ["Doctoral Year", profileResearcher.doctoral_year > 0 ? String(profileResearcher.doctoral_year) : ""],
+                ] as [string, string][]).map(([label, value]) => (
+                  <div key={label} className="flex justify-between text-sm">
+                    <span className="text-gray-500">{label}</span>
+                    <span className={value ? "text-gray-900 font-medium" : "text-gray-300"}>
+                      {value || "—"}
+                    </span>
+                  </div>
+                ))}
+              </div>
+              <div className="px-5 pb-5 pt-2 flex justify-end gap-2">
+                {profileResearcher.score_count > 0 && (
+                  <Link
+                    href={`/results/${profileResearcher.person_id}`}
+                    className="text-sm px-3 py-1.5 rounded bg-[#cf4520] text-white hover:bg-[#a3381a] transition-colors"
+                  >
+                    View Results
+                  </Link>
+                )}
+                <button
+                  onClick={() => setProfileResearcher(null)}
+                  className="text-sm px-3 py-1.5 rounded border border-gray-200 text-gray-600 hover:bg-gray-50 transition-colors"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     );
   }
@@ -110,9 +301,16 @@ export default function ResearchersPage() {
       actionHref="/setup"
     >
     <div className="max-w-3xl">
-      <h2 className="text-2xl font-semibold mb-2 text-gray-900">Researchers</h2>
+      <div className="flex items-center justify-between mb-2">
+        <h2 className="text-2xl font-semibold text-gray-900">Researchers</h2>
+        {replacing && (
+          <Button variant="ghost" size="sm" onClick={() => { setReplacing(false); setUploadResult(null); setMappings([]); }}>
+            ← Back to list
+          </Button>
+        )}
+      </div>
       <p className="text-gray-500 mb-6">
-        Add your faculty and researchers so we can find their publications.
+        {replacing ? "Upload a new file to replace the current roster." : "Add your faculty and researchers so we can find their publications."}
       </p>
 
       {!uploadResult ? (
@@ -204,6 +402,7 @@ export default function ResearchersPage() {
               onClick={() => {
                 setUploadResult(null);
                 setMappings([]);
+                if (replacing) setReplacing(false);
               }}
             >
               Cancel
