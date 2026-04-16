@@ -200,19 +200,29 @@ ReCiter-Desktop/
 Run components individually for development:
 
 ```bash
-# Database
-docker compose up db
+# 1. Database — start a local MariaDB container
+docker run -d --name reciter-desktop-db \
+  -p 3306:3306 \
+  -e MARIADB_USER=reciter \
+  -e MARIADB_PASSWORD=reciter_local \
+  -e MARIADB_DATABASE=reciter_desktop \
+  -e MARIADB_ALLOW_EMPTY_ROOT_PASSWORD=yes \
+  -v reciter-desktop-data:/var/lib/mysql \
+  mariadb:11
 
-# Backend (with hot reload)
-cd api
+# 2. Backend (with hot reload)
+python -m venv venv
+source venv/bin/activate
 pip install -r requirements.txt
-PYTHONPATH=.. uvicorn api.main:app --reload --port 8090
+uvicorn api.main:app --reload --port 8090
 
-# Frontend (with hot reload)
+# 3. Frontend (with hot reload)
 cd frontend
 npm install
 npm run dev
 ```
+
+The backend defaults to `mysql+pymysql://reciter:reciter_local@localhost:3306/reciter_desktop`. Override with the `DATABASE_URL` environment variable if needed. Alembic migrations run automatically on startup.
 
 ## Requirements
 
