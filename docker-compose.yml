@@ -2,7 +2,7 @@ services:
   frontend:
     build: ./frontend
     ports:
-      - "3002:3000"
+      - "${FRONTEND_PORT:-3002}:3000"
     depends_on:
       - api
     environment:
@@ -28,7 +28,7 @@ services:
   db:
     image: mariadb:11
     ports:
-      - "3306:3306"
+      - "${DB_PORT:-3306}:3306"
     volumes:
       - db_data:/var/lib/mysql
       - ./api/schema.sql:/docker-entrypoint-initdb.d/schema.sql

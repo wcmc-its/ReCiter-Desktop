@@ -16,19 +16,30 @@ The full [ReCiter](https://github.com/wcmc-its/reciter) platform is a powerful J
 
 ## Quick start
 
+1. Install [Docker Desktop](https://www.docker.com/products/docker-desktop) (free for personal, educational, and small-business use).
+2. Download or clone this repository.
+3. **macOS:** double-click **`Start ReCiter.command`** in Finder.
+   **Windows:** double-click **`Start ReCiter.bat`** in File Explorer.
+
+The app opens in your default browser. To stop it, double-click **`Stop ReCiter.command`** (or `.bat`). Your data is preserved between runs.
+
+The launcher picks free ports automatically, so a local MariaDB or another app on the default ports won't block startup.
+
+> First-run note: the launcher pulls the MariaDB image (~150 MB) the first time. Subsequent starts take a few seconds.
+
+Optional: set a free [NCBI API key](https://ncbiinsights.ncbi.nlm.nih.gov/2017/11/02/new-api-keys-for-the-e-utilities/) to lift the PubMed rate limit from 3 to 10 requests/sec. Export `PUBMED_API_KEY` in your shell profile before running the launcher.
+
+### For developers
+
+If you'd rather run the stack directly without the launcher:
+
 ```bash
 git clone https://github.com/wcmc-its/ReCiter-Desktop.git
 cd ReCiter-Desktop
 docker compose up
 ```
 
-Open <http://localhost:3002>.
-
-Optional: set a free [NCBI API key](https://ncbiinsights.ncbi.nlm.nih.gov/2017/11/02/new-api-keys-for-the-e-utilities/) to lift the PubMed rate limit from 3 to 10 requests/sec:
-
-```bash
-PUBMED_API_KEY=your_key docker compose up
-```
+Defaults: frontend on `3002`, API on `8090`, MariaDB on `3306`. Override any of them with `FRONTEND_PORT`, `DB_PORT`, or `PUBMED_API_KEY` environment variables.
 
 ---
 
