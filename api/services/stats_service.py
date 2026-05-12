@@ -235,11 +235,14 @@ def compute_disagreements(
     person_ids: list,
     pmids: list,
     names: dict | None = None,
+    gap_threshold: float = 50.0,
 ) -> list:
-    """Compute top-10 strongest disagreements between scores and assertions.
+    """Compute strongest disagreements between scores and assertions.
 
     Per STATS-05: assertion_value is 100 for ACCEPTED, 0 for REJECTED.
     Disagreement = |score - assertion_value| on 0-100 scale.
+
+    Returns all pairs with disagreement >= gap_threshold, sorted descending.
 
     Args:
         scores_100: Scores on 0-100 scale.
@@ -248,13 +251,15 @@ def compute_disagreements(
         pmids: List of pmid strings (parallel to scores).
         names: Optional dict of {person_id: {"first_name": str, "last_name": str}}.
                If None, first_name and last_name in results are None.
+        gap_threshold: Minimum disagreement to include (default 50).
     """
     assertion_values = np.array([100.0 if a == "ACCEPTED" else 0.0 for a in assertions])
     disagreements = np.abs(scores_100 - assertion_values)
-    top_indices = np.argsort(disagreements)[::-1][:10]
+    indices = np.argsort(disagreements)[::-1]
+    indices = [i for i in indices if disagreements[i] >= gap_threshold]
 
     result = []
-    for i in top_indices:
+    for i in indices:
         pid = person_ids[i]
         result.append({
             "person_id": pid,
@@ -303,13 +308,13 @@ def compute_stats(db: Session) -> dict:
     pr = compute_pr(scores_01, labels_binary)
     distribution = compute_distribution(scores_100, assertions)
 
-    # Step 5: Disagreements — look up names for top-10 person_ids
+    # Step 5: Disagreements — look up names for all qualifying person_ids
     assertion_values_arr = np.array(
         [100.0 if a == "ACCEPTED" else 0.0 for a in assertions]
     )
     disagreements_arr = np.abs(scores_100 - assertion_values_arr)
-    top_indices = np.argsort(disagreements_arr)[::-1][:10]
-    top_person_ids = list({person_ids[i] for i in top_indices})
+    qualifying_indices = [i for i in range(len(disagreements_arr)) if disagreements_arr[i] >= 50.0]
+    top_person_ids = list({person_ids[i] for i in qualifying_indices})
 
     identity_rows = (
         db.query(Identity)
