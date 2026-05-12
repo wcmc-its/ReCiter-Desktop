@@ -1,17 +1,25 @@
 services:
   frontend:
-    build: ./frontend
+    build:
+      context: ./frontend
+      args:
+        # Next.js bakes the rewrite into the standalone server at build
+        # time, so the proxy target has to be set as a build arg. The
+        # frontend container reaches the backend over the docker network.
+        API_INTERNAL_URL: http://api:8090
     ports:
       - "${FRONTEND_PORT:-3002}:3000"
+    volumes:
+      # Shared with api: the backend writes its shared-secret token to
+      # ~/.reciter-desktop/api-token on first start, and the frontend's
+      # /api-auth/token route reads it from the same place. Both
+      # containers run as root, so this mounts at /root/.reciter-desktop.
+      - auth_token:/root/.reciter-desktop
     depends_on:
       - api
-    environment:
-      - NEXT_PUBLIC_API_URL=http://localhost:8090
 
   api:
     build: ./api
-    ports:
-      - "8090:8090"
     depends_on:
       db:
         condition: service_healthy
@@ -21,6 +29,7 @@ services:
       - ./models:/app/models
       - ./data:/app/data
       - ./config:/app/config
+      - auth_token:/root/.reciter-desktop
     environment:
       - DATABASE_URL=mysql+pymysql://reciter:reciter_local@db:3306/reciter_desktop
       - PUBMED_API_KEY=${PUBMED_API_KEY:-}
@@ -45,3 +54,4 @@ services:
 
 volumes:
   db_data:
+  auth_token:

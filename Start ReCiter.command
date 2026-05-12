@@ -9,8 +9,6 @@ set -u
 
 cd "$(dirname "$0")"
 
-API_PORT=8090   # fixed; frontend bundle bakes this in at build time.
-
 say() { printf "\n\033[1;36m▸\033[0m %s\n" "$*"; }
 err() { printf "\n\033[1;31m✗\033[0m %s\n" "$*" >&2; }
 osa_alert() { osascript -e "display dialog \"$1\" buttons {\"OK\"} default button \"OK\" with icon note with title \"ReCiter Desktop\"" >/dev/null 2>&1 || true; }
@@ -48,117 +46,57 @@ find_free_port() {
   return 1
 }
 
-# 4. API port is fixed at 8090. Three cases:
-#    (a) Free → continue.
-#    (b) Held by ReCiter Desktop already (this very compose stack, or a
-#        previous one we left behind) → answer "yes, it's us" and just
-#        open the browser to the existing instance.
-#    (c) Held by something else (often: a developer's native uvicorn
-#        running outside docker compose) → friendlier dialog with two
-#        choices: stop that process for the user, or cancel.
-api_port_holder_pid() {
-  lsof -nP -iTCP:"$API_PORT" -sTCP:LISTEN -t 2>/dev/null | head -n1
-}
-
-api_port_holder_command() {
-  local pid="$1"
-  [ -n "$pid" ] || return 0
-  ps -p "$pid" -o command= 2>/dev/null || true
-}
-
-PORT_HOLDER_PID=$(api_port_holder_pid)
-if [ -n "$PORT_HOLDER_PID" ]; then
-  HOLDER_CMD=$(api_port_holder_command "$PORT_HOLDER_PID")
-  RECITER_COMPOSE_OWNS_8090=0
-  # Is it our own running compose stack? docker compose ps emits the api
-  # service if and only if the project's stack is up.
-  if docker compose ps --services --filter "status=running" 2>/dev/null | grep -qx api; then
-    RECITER_COMPOSE_OWNS_8090=1
-  fi
-
-  if [ "$RECITER_COMPOSE_OWNS_8090" -eq 1 ]; then
+# 4. If our compose stack is already running, just open the browser.
+if docker compose ps --services --filter "status=running" 2>/dev/null | grep -qx frontend; then
+  EXISTING_FRONTEND_PORT=$(docker compose port frontend 3000 2>/dev/null | awk -F: '{print $NF}')
+  if [ -n "$EXISTING_FRONTEND_PORT" ]; then
     say "ReCiter Desktop is already running — opening it."
-    FRONTEND_PORT=$(docker compose port frontend 3000 2>/dev/null | awk -F: '{print $NF}')
-    if [ -n "$FRONTEND_PORT" ]; then
-      open "http://localhost:$FRONTEND_PORT"
-    fi
-    exit 0
-  fi
-
-  # Not docker compose — looks like a developer's native uvicorn or
-  # another tool. Offer to stop it.
-  CHOICE=$(osascript <<EOF 2>/dev/null
-display dialog "ReCiter Desktop can't start because another program is using port $API_PORT.
-
-This usually means a leftover ReCiter Desktop process from earlier.
-
-Stop that process and continue?" buttons {"Cancel", "Stop and Continue"} default button "Stop and Continue" with title "ReCiter Desktop" with icon caution
-EOF
-)
-  if echo "$CHOICE" | grep -q "Stop and Continue"; then
-    kill "$PORT_HOLDER_PID" 2>/dev/null || true
-    # Give it up to 5s to release the port.
-    for i in 1 2 3 4 5; do
-      sleep 1
-      [ -z "$(api_port_holder_pid)" ] && break
-    done
-    if [ -n "$(api_port_holder_pid)" ]; then
-      err "Couldn't free port $API_PORT (PID $PORT_HOLDER_PID still holding it)."
-      osa_alert "Couldn't stop the process on port $API_PORT. Restart your computer and try again."
-      exit 1
-    fi
-  else
+    open "http://localhost:$EXISTING_FRONTEND_PORT"
     exit 0
   fi
 fi
 
-# 5. Frontend + DB ports can float.
+# 5. Pick free host ports for the frontend and DB. The API is not
+#    exposed to the host — the frontend proxies /api/* to it over the
+#    docker network — so no API port collisions are possible.
 FRONTEND_PORT=$(find_free_port 3002) || { err "No free frontend port near 3002."; exit 1; }
 DB_PORT=$(find_free_port 3306) || { err "No free database port near 3306."; exit 1; }
-export FRONTEND_PORT API_PORT DB_PORT
+export FRONTEND_PORT DB_PORT
 
 say "Starting ReCiter Desktop"
 echo "  Frontend:  http://localhost:$FRONTEND_PORT"
-echo "  API:       http://localhost:$API_PORT"
 echo "  Database:  localhost:$DB_PORT"
 
-# 6. Bring up the stack. Build on first run pulls images (~150 MB for mariadb).
+# 6. Bring up the stack. --build picks up any local source changes; the
+#    docker layer cache makes no-op runs fast (~1s) when nothing changed.
+#    First run downloads ~150 MB for the mariadb base image.
 say "Launching containers (first run downloads ~150 MB)..."
-if ! docker compose up -d --quiet-pull; then
+if ! docker compose up -d --build --quiet-pull; then
   err "docker compose up failed. Check the output above."
   osa_alert "Failed to start the containers. Check Terminal for details."
   exit 1
 fi
 
-# 7. Wait for the API. 60s ceiling; the mariadb healthcheck is the slow part.
-say "Waiting for the backend to come up..."
-for i in $(seq 1 60); do
-  if curl -sf "http://localhost:$API_PORT/api/health" >/dev/null 2>&1; then
+# 7. Single readiness check via the frontend's proxy. /api/health going
+#    through localhost:$FRONTEND_PORT confirms the frontend is serving
+#    AND the proxy is wired AND the backend is healthy — covers the
+#    whole chain in one curl.
+say "Waiting for ReCiter Desktop to come up..."
+for i in $(seq 1 90); do
+  if curl -sf "http://localhost:$FRONTEND_PORT/api/health" >/dev/null 2>&1; then
     printf " ready (%ds)\n" "$i"
     break
   fi
   printf "."
   sleep 1
-  if [ "$i" -eq 60 ]; then
-    err "Backend didn't respond within 60s."
-    osa_alert "ReCiter Desktop's backend didn't come up in time.\n\nTry running this script again, or check 'docker compose logs' in Terminal."
+  if [ "$i" -eq 90 ]; then
+    err "ReCiter Desktop didn't come up in 90s."
+    osa_alert "ReCiter Desktop didn't come up in time.\n\nTry running this script again, or check 'docker compose logs' in Terminal."
     exit 1
   fi
 done
 
-# 8. Wait for the frontend separately — Next.js can take a few seconds
-#    after the container reports up.
-say "Waiting for the frontend..."
-for i in $(seq 1 30); do
-  if curl -sf "http://localhost:$FRONTEND_PORT" >/dev/null 2>&1; then
-    printf " ready (%ds)\n" "$i"
-    break
-  fi
-  printf "."
-  sleep 1
-done
-
-# 9. Open the browser.
+# 8. Open the browser.
 open "http://localhost:$FRONTEND_PORT"
 
 say "ReCiter Desktop is running."

@@ -1,4 +1,6 @@
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8090";
+// All /api/* requests go through the Next.js rewrite (see
+// frontend/next.config.mjs) so the browser only talks to a single
+// origin. The backend is never exposed directly to the host.
 const TOKEN_HEADER = "X-Reciter-Token";
 
 let _tokenPromise: Promise<string> | null = null;
@@ -25,7 +27,7 @@ async function withToken(headers?: HeadersInit): Promise<HeadersInit> {
 
 export async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
   const headers = await withToken({ "Content-Type": "application/json", ...options?.headers });
-  const res = await fetch(`${API_BASE}${path}`, { ...options, headers });
+  const res = await fetch(path, { ...options, headers });
   if (!res.ok) {
     const text = await res.text();
     throw new Error(`API error ${res.status}: ${text}`);
@@ -37,7 +39,7 @@ export async function apiUpload<T>(path: string, file: File): Promise<T> {
   const formData = new FormData();
   formData.append("file", file);
   const headers = await withToken();
-  const res = await fetch(`${API_BASE}${path}`, {
+  const res = await fetch(path, {
     method: "POST",
     body: formData,
     headers,
@@ -50,7 +52,7 @@ export async function apiUpload<T>(path: string, file: File): Promise<T> {
 }
 
 export function apiExportUrl(path: string, params?: Record<string, string>): string {
-  const url = new URL(`${API_BASE}${path}`);
+  const url = new URL(path, window.location.origin);
   if (params) {
     Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
   }
