@@ -1,0 +1,53 @@
+{
+  "version": "1.0",
+  "timestamp": "2026-04-06T16:02:27.446Z",
+  "phase": "04",
+  "phase_name": "schema-foundation-parallel-processing",
+  "phase_dir": ".planning/phases/04-schema-foundation-parallel-processing",
+  "plan": 2,
+  "task": 4,
+  "total_tasks": 4,
+  "status": "paused",
+  "completed_tasks": [
+    {"id": 1, "name": "Pipeline runner refactor — as_completed + adaptive workers + run_id", "status": "done", "commit": "d8dc5a7"},
+    {"id": 2, "name": "Pipeline router — create PipelineRun row + update run status", "status": "done", "commit": "d8dc5a7"},
+    {"id": 3, "name": "Frontend — remove processing event, add worker count display", "status": "done", "commit": "d8dc5a7"},
+    {"id": 4, "name": "Task 4: Verify pipeline runs with completion-order SSE and worker count display", "status": "in_progress", "progress": "Pipeline run executed. Issues found during verification (see blockers)."}
+  ],
+  "remaining_tasks": [
+    {"id": "post-plan", "name": "Write 04-02-SUMMARY.md", "status": "not_started"},
+    {"id": "post-phase", "name": "Decide: transition Phase 04 + Phase 05, or start new milestone v2.1 for pipeline bugs", "status": "not_started"}
+  ],
+  "blockers": [
+    {
+      "description": "SQLAlchemy concurrent update race condition: OperationalError 1020 when two workers update same (person_id, pmid) in person_article_score",
+      "type": "technical",
+      "workaround": "Wrap score upsert in db.no_autoflush or use INSERT ... ON DUPLICATE KEY UPDATE"
+    },
+    {
+      "description": "04-02-SUMMARY.md was never written after plan execution",
+      "type": "technical",
+      "workaround": "Write it on resume before any other action"
+    }
+  ],
+  "human_actions_pending": [
+    {
+      "action": "Decide milestone path: fix pipeline UI bugs in new v2.1 milestone, or continue v2.0 Phase 05",
+      "context": "User started /gsd-new-milestone with pipeline UI bug list, then paused instead",
+      "blocking": true
+    }
+  ],
+  "decisions": [
+    {"decision": "as_completed for SSE completion order", "rationale": "Submission-order blocking felt slow to users", "phase": "04"},
+    {"decision": "8 workers w/ API key, 3 without", "rationale": "Matches PubMed rate limits (10/sec with key, 3 without)", "phase": "04"},
+    {"decision": "processing event type removed", "rationale": "Vestigial after as_completed refactor; rows go queued→complete directly", "phase": "04"}
+  ],
+  "uncommitted_files": [
+    ".planning/phases/04-schema-foundation-parallel-processing/.continue-here.md",
+    ".planning/HANDOFF.json",
+    ".planning/phases/04-schema-foundation-parallel-processing/04-VALIDATION.md",
+    ".planning/phases/04-schema-foundation-parallel-processing/04-DISCUSS-CHECKPOINT.json"
+  ],
+  "next_action": "Write 04-02-SUMMARY.md, then ask user whether to transition Phase 04 or start new milestone v2.1 for pipeline UI bugs",
+  "context_notes": "Phase 04 all code committed. Task 4 human-verify revealed 10 pipeline UI/UX bugs plus a critical SQLAlchemy concurrency error with generic-name researchers. User started /gsd-new-milestone for these bugs then switched to /gsd-pause-work. New milestone note captured in .continue-here.md."
+}

@@ -5,9 +5,10 @@ Thin wrapper around NCBI efetch/esearch with rate limiting and XML parsing.
 """
 
 import logging
+import threading
 import time
 import xml.etree.ElementTree as ET
-from typing import List, Optional
+from typing import Callable, List, Optional
 
 import requests
 
@@ -19,17 +20,61 @@ EFETCH_URL = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi"
 ESEARCH_URL = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
 
 _BATCH_SIZE = 200
-_last_request_time = 0.0
+
+
+class _TokenBucket:
+    """Thread-safe token bucket rate limiter.
+
+    Allows concurrent requests up to `rate` per second. Each call to
+    acquire() blocks only if tokens are exhausted, letting multiple
+    threads make simultaneous PubMed calls.
+    """
+
+    def __init__(self, rate: float):
+        self.rate = rate
+        self.tokens = rate
+        self.max_tokens = rate
+        self.last_refill = time.monotonic()
+        self.lock = threading.Lock()
+
+    def set_rate(self, rate: float):
+        with self.lock:
+            self.rate = rate
+            self.max_tokens = rate
+            self.tokens = min(self.tokens, rate)
+
+    def acquire(self):
+        while True:
+            with self.lock:
+                now = time.monotonic()
+                elapsed = now - self.last_refill
+                self.tokens = min(self.max_tokens, self.tokens + elapsed * self.rate)
+                self.last_refill = now
+                if self.tokens >= 1.0:
+                    self.tokens -= 1.0
+                    return
+            time.sleep(0.05)  # Brief sleep before retry
+
+
+# Global bucket — default to no-key rate (3/sec), upgraded when API key detected
+_bucket = _TokenBucket(rate=2.5)
+_bucket_configured_for_key = False
 
 
 def _rate_limit(api_key: str = ""):
-    """Enforce rate limiting between requests."""
-    global _last_request_time
-    interval = 0.1 if api_key else 0.34  # 10/sec with key, 3/sec without
-    elapsed = time.time() - _last_request_time
-    if elapsed < interval:
-        time.sleep(interval - elapsed)
-    _last_request_time = time.time()
+    """Acquire a token before making a PubMed request.
+
+    With API key: allows ~9 concurrent requests/sec.
+    Without: ~2.5 requests/sec.
+    """
+    global _bucket_configured_for_key
+    if api_key and not _bucket_configured_for_key:
+        _bucket.set_rate(9.0)
+        _bucket_configured_for_key = True
+    elif not api_key and _bucket_configured_for_key:
+        _bucket.set_rate(2.5)
+        _bucket_configured_for_key = False
+    _bucket.acquire()
 
 
 def _parse_author(author_el: ET.Element, rank: int) -> Author:
@@ -191,11 +236,22 @@ def _parse_article(article_el: ET.Element) -> Optional[Article]:
     )
 
 
-def fetch_articles(pmids: List[int], api_key: str = "") -> List[Article]:
-    """Fetch article metadata from PubMed by PMID, in batches of 200."""
+def fetch_articles(
+    pmids: List[int],
+    api_key: str = "",
+    on_batch: Optional[Callable[[dict], None]] = None,
+) -> List[Article]:
+    """Fetch article metadata from PubMed by PMID, in batches of 200.
+
+    If `on_batch` is provided, it's invoked after each batch with:
+        {batch, batches, fetched, total, error?: str}
+    """
     articles = []
-    for i in range(0, len(pmids), _BATCH_SIZE):
+    total = len(pmids)
+    batches = (total + _BATCH_SIZE - 1) // _BATCH_SIZE if total else 0
+    for i in range(0, total, _BATCH_SIZE):
         batch = pmids[i : i + _BATCH_SIZE]
+        batch_idx = i // _BATCH_SIZE + 1
         _rate_limit(api_key)
 
         params = {
@@ -207,51 +263,68 @@ def fetch_articles(pmids: List[int], api_key: str = "") -> List[Article]:
         if api_key:
             params["api_key"] = api_key
 
+        batch_error: Optional[str] = None
         try:
             resp = requests.get(EFETCH_URL, params=params, timeout=30)
             resp.raise_for_status()
-        except requests.RequestException as e:
-            _log.error(f"PubMed efetch failed for batch starting at index {i}: {e}")
-            continue
-
-        try:
             root = ET.fromstring(resp.content)
+            for article_el in root.findall("PubmedArticle"):
+                article = _parse_article(article_el)
+                if article:
+                    articles.append(article)
+        except requests.RequestException as e:
+            batch_error = f"PubMed request failed: {e}"
+            _log.error(f"PubMed efetch failed for batch {batch_idx}: {e}")
         except ET.ParseError as e:
-            _log.error(f"Failed to parse PubMed XML: {e}")
-            continue
+            batch_error = f"PubMed returned invalid XML: {e}"
+            _log.error(f"Failed to parse PubMed XML for batch {batch_idx}: {e}")
 
-        for article_el in root.findall("PubmedArticle"):
-            article = _parse_article(article_el)
-            if article:
-                articles.append(article)
+        _log.info(f"Fetched {len(articles)} articles so far ({i + len(batch)}/{total} PMIDs)")
 
-        _log.info(f"Fetched {len(articles)} articles so far ({i + len(batch)}/{len(pmids)} PMIDs)")
+        if on_batch:
+            event = {
+                "batch": batch_idx,
+                "batches": batches,
+                "fetched": len(articles),
+                "total": total,
+            }
+            if batch_error:
+                event["error"] = batch_error
+            on_batch(event)
 
     return articles
 
 
-def search_by_name(
-    first_name: str,
-    last_name: str,
-    affiliation: str = "",
-    api_key: str = "",
-    max_results: int = 2000,
-) -> List[int]:
-    """Search PubMed by author name, optionally filtered by affiliation."""
-    _rate_limit(api_key)
+def _build_author_term(last_name: str, first_name: str, full_name: bool = False) -> str:
+    """Build a PubMed [au] search term.
 
-    # Build search term
-    author_term = f"{last_name} {first_name[0] if first_name else ''}[Author]"
-    if affiliation:
-        search_term = f"({author_term}) AND ({affiliation}[Affiliation])"
+    Matches ReCiter's PubMedQueryBuilder:
+    - full_name=False (lenient): LastName FirstInitial[au]
+    - full_name=True  (strict):  LastName FirstName[au]
+
+    Compound names (spaces/hyphens) are quoted.
+    """
+    if full_name:
+        name_part = f"{last_name} {first_name}"
     else:
-        search_term = author_term
+        name_part = f"{last_name} {first_name[0]}" if first_name else last_name
 
+    if " " in last_name or "-" in last_name:
+        return f'"{name_part}"[au]'
+    return f"{name_part}[au]"
+
+
+def esearch_count(query: str, api_key: str = "") -> int:
+    """Get the result count for an esearch query without fetching IDs.
+
+    This is the equivalent of ReCiter's getNumberOfResults() —
+    a cheap count-only call used to decide strict vs lenient strategy.
+    """
+    _rate_limit(api_key)
     params = {
         "db": "pubmed",
-        "term": search_term,
-        "retmax": max_results,
-        "rettype": "uilist",
+        "term": query,
+        "rettype": "count",
         "retmode": "xml",
     }
     if api_key:
@@ -260,23 +333,152 @@ def search_by_name(
     try:
         resp = requests.get(ESEARCH_URL, params=params, timeout=30)
         resp.raise_for_status()
-    except requests.RequestException as e:
-        _log.error(f"PubMed esearch failed: {e}")
-        return []
-
-    try:
         root = ET.fromstring(resp.content)
-    except ET.ParseError as e:
-        _log.error(f"Failed to parse esearch XML: {e}")
-        return []
+        count_text = root.findtext("Count")
+        count = int(count_text) if count_text and count_text.isdigit() else 0
+        _log.info(f"esearch count for '{query}': {count}")
+        return count
+    except (requests.RequestException, ET.ParseError) as e:
+        _log.error(f"esearch count failed for '{query}': {e}")
+        return 0
 
-    pmids = []
-    for id_el in root.findall(".//IdList/Id"):
-        if id_el.text and id_el.text.isdigit():
-            pmids.append(int(id_el.text))
 
-    count_el = root.findtext("Count")
-    total = int(count_el) if count_el and count_el.isdigit() else len(pmids)
-    _log.info(f"PubMed search '{search_term}': {total} total, returning {len(pmids)}")
+def _esearch_fetch_ids(query: str, max_results: int, api_key: str = "") -> List[int]:
+    """Execute an esearch and return all PMIDs, paginating if needed."""
+    pmids: List[int] = []
+    retstart = 0
+    batch = min(max_results, 10000)  # PubMed max retmax is 100000
+
+    while retstart < max_results:
+        _rate_limit(api_key)
+        params = {
+            "db": "pubmed",
+            "term": query,
+            "retmax": min(batch, max_results - retstart),
+            "retstart": retstart,
+            "rettype": "uilist",
+            "retmode": "xml",
+        }
+        if api_key:
+            params["api_key"] = api_key
+
+        try:
+            resp = requests.get(ESEARCH_URL, params=params, timeout=30)
+            resp.raise_for_status()
+            root = ET.fromstring(resp.content)
+        except (requests.RequestException, ET.ParseError) as e:
+            _log.error(f"esearch fetch failed at retstart={retstart}: {e}")
+            break
+
+        batch_ids = []
+        for id_el in root.findall(".//IdList/Id"):
+            if id_el.text and id_el.text.isdigit():
+                batch_ids.append(int(id_el.text))
+
+        if not batch_ids:
+            break
+        pmids.extend(batch_ids)
+        retstart += len(batch_ids)
+
+        # If we got fewer than requested, we've exhausted results
+        if len(batch_ids) < batch:
+            break
 
     return pmids
+
+
+def search_by_name(
+    first_name: str,
+    last_name: str,
+    affiliation: str = "",
+    api_key: str = "",
+    lenient_threshold: int = 2000,
+    strict_threshold: int = 1000,
+    mindate: str = "",
+) -> dict:
+    """Search PubMed using ReCiter's exact cascading retrieval strategy.
+
+    Decision tree (matches AbstractRetrievalStrategy.retrievePubMedArticles):
+    1. Build lenient query: LastName FirstInitial[au]
+    2. esearch count for lenient query
+    3. If count <= lenient_threshold (2000): fetch all lenient results
+    4. If count > lenient_threshold:
+       a. Build strict query: LastName FullFirstName[au]
+       b. esearch count for strict query
+       c. If strict count <= strict_threshold (1000): fetch strict results
+       d. If strict count > strict_threshold: skip (too ambiguous)
+
+    Returns a dict with retrieval metadata:
+        {
+            "pmids": [...],
+            "query_type": "lenient" | "strict" | "skipped",
+            "lenient_query": str,
+            "lenient_count": int,
+            "strict_query": str | None,
+            "strict_count": int | None,
+        }
+    """
+    lenient_base = _build_author_term(last_name, first_name, full_name=False)
+    strict_base = _build_author_term(last_name, first_name, full_name=True)
+
+    # Append date filter for incremental retrieval (ONLY_NEWLY_ADDED_PUBLICATIONS)
+    date_filter = f' AND ("{mindate}"[PDAT] : "3000"[PDAT])' if mindate else ""
+    lenient_query = lenient_base + date_filter
+    strict_query = strict_base + date_filter
+
+    result = {
+        "pmids": [],
+        "query_type": "skipped",
+        "lenient_query": lenient_query,
+        "lenient_count": 0,
+        "strict_query": strict_query,
+        "strict_count": None,
+        "mindate": mindate or None,
+    }
+
+    # Step 1: lenient count
+    lenient_count = esearch_count(lenient_query, api_key)
+    result["lenient_count"] = lenient_count
+
+    if lenient_count == 0:
+        result["query_type"] = "lenient"
+        _log.info(f"Search '{lenient_query}': 0 results")
+        return result
+
+    if lenient_count <= lenient_threshold:
+        # Step 2a: lenient count is manageable — fetch all
+        pmids = _esearch_fetch_ids(lenient_query, lenient_count, api_key)
+        result["pmids"] = pmids
+        result["query_type"] = "lenient"
+        _log.info(
+            f"Search '{lenient_query}': {lenient_count} count, "
+            f"fetched {len(pmids)} (lenient, under threshold {lenient_threshold})"
+        )
+        return result
+
+    # Step 2b: lenient count exceeds threshold — try strict
+    _log.info(
+        f"Search '{lenient_query}': {lenient_count} count exceeds "
+        f"lenient threshold {lenient_threshold}, switching to strict"
+    )
+    strict_count = esearch_count(strict_query, api_key)
+    result["strict_count"] = strict_count
+
+    if strict_count <= strict_threshold:
+        # Step 3a: strict count is manageable — fetch all
+        pmids = _esearch_fetch_ids(strict_query, strict_count, api_key)
+        result["pmids"] = pmids
+        result["query_type"] = "strict"
+        _log.info(
+            f"Search '{strict_query}': {strict_count} count, "
+            f"fetched {len(pmids)} (strict, under threshold {strict_threshold})"
+        )
+        return result
+
+    # Step 3b: strict count also too high — skip
+    _log.warning(
+        f"Search '{strict_query}': {strict_count} count exceeds "
+        f"strict threshold {strict_threshold}, skipping retrieval"
+    )
+    result["query_type"] = "skipped"
+    return result

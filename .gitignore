@@ -32,3 +32,22 @@ models/local/
 .streamlit/
 
 # User config (stored in ~/.reciter-desktop/)
+
+# Docker
+db_data/
+
+# Frontend
+frontend/node_modules/
+frontend/.next/
+
+# API
+api/__pycache__/
+api/*.pyc
+
+# Brainstorming artifacts
+.superpowers/
+
+# Claude Code local artifacts
+CLAUDE.md
+CLAUDE.local.md
+.claude/
