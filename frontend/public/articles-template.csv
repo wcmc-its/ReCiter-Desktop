@@ -1,0 +1,4 @@
+person_id,pmid,assertion
+jane.doe,12345678,ACCEPTED
+jane.doe,23456789,REJECTED
+jane.doe,34567890,

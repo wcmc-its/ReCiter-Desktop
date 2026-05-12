@@ -8,9 +8,17 @@ interface FileUploadProps {
   onFileSelected: (file: File) => void;
   description: string;
   accept?: string;
+  templateHref?: string;
+  templateLabel?: string;
 }
 
-export function FileUpload({ onFileSelected, description, accept }: FileUploadProps) {
+export function FileUpload({
+  onFileSelected,
+  description,
+  accept,
+  templateHref,
+  templateLabel = "Download sample template",
+}: FileUploadProps) {
   const [dragging, setDragging] = useState(false);
 
   const handleDrop = useCallback(
@@ -59,10 +67,18 @@ export function FileUpload({ onFileSelected, description, accept }: FileUploadPr
         >
           Browse files
         </Button>
-        <span className="text-gray-400 text-sm">or</span>
-        <a href="#" className="text-sm text-[#cf4520] border-b border-dashed border-[#cf4520]/30">
-          Download sample template
-        </a>
+        {templateHref && (
+          <>
+            <span className="text-gray-400 text-sm">or</span>
+            <a
+              href={templateHref}
+              download
+              className="text-sm text-[#cf4520] border-b border-dashed border-[#cf4520]/30 hover:text-[#a3381a]"
+            >
+              {templateLabel}
+            </a>
+          </>
+        )}
       </div>
       <p className="text-xs text-gray-400 mt-4">
         Column names are flexible — we recognize many common variations.

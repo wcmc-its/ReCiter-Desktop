@@ -1,0 +1,2 @@
+person_id,first_name,last_name,middle_name,primary_email,primary_institution,department,title,orcid,bachelor_year,doctoral_year
+jane.doe,Jane,Doe,A,jane.doe@example.edu,Example University,Genetics,Associate Professor,0000-0002-1825-0097,2002,2008
