@@ -406,10 +406,13 @@ export default function PipelinePage() {
             scoring later from the Retrieve &amp; Score page.
           </p>
         }
-        preserved={["Completed researchers and their scores remain in the database"]}
+        preserved={[
+          "Completed researchers and their scores remain in the database",
+          "Researchers already in flight will finish and be saved",
+        ]}
         destroyed={[
-          "Researchers currently being scored will be stopped mid-run; in-flight work is lost",
-          "Queued researchers will not be processed",
+          "Live progress in this window stops updating",
+          "Researchers not yet started will be skipped on the next run unless re-queued",
         ]}
         confirmLabel="Cancel run"
         cancelLabel="Keep running"

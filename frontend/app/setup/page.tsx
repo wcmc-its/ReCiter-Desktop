@@ -129,7 +129,13 @@ export default function SetupPage() {
   }
 
   async function resetConfig() {
-    await apiFetch("/api/institution", { method: "DELETE" });
+    try {
+      await apiFetch("/api/institution", { method: "DELETE" });
+    } catch (err) {
+      // Surface the failure rather than silently leaving the form populated.
+      // Local state still resets so the user isn't stuck mid-wizard.
+      console.error("Reset configuration failed", err);
+    }
     setStep(1);
     setDomain("");
     setInstitutionName("");
@@ -137,6 +143,7 @@ export default function SetupPage() {
     setEmailDomains([]);
     setStatusMessages([]);
     setAffiliationCount(0);
+    refresh();
   }
 
   async function saveConfig() {

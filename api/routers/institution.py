@@ -42,8 +42,11 @@ def _validate_thresholds(lenient: int | None, strict: int | None) -> None:
 
 
 @router.post("/discover")
-async def discover(req: DiscoverRequest):
-    api_key = os.environ.get("PUBMED_API_KEY")
+async def discover(req: DiscoverRequest, db: Session = Depends(get_db)):
+    # Prefer the user-configured key (Setup page) over the env-var fallback so
+    # discovery runs at the 9 req/s authenticated rate instead of the 3 req/s
+    # public limit.
+    api_key = get_pubmed_api_key(db)
 
     async def event_stream():
         async for event in discover_institution(req.domain, req.year_range, api_key):
@@ -145,3 +148,11 @@ def get_config(db: Session = Depends(get_db)):
         except (json.JSONDecodeError, TypeError):
             config[row.config_key] = row.config_value
     return config
+
+
+@router.delete("")
+def delete_config(db: Session = Depends(get_db)):
+    """Clear institution configuration so the Setup wizard starts fresh."""
+    db.query(Institution).delete()
+    db.commit()
+    return {"status": "ok"}

@@ -1,4 +1,5 @@
 import json
+import logging
 from datetime import datetime
 from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
@@ -9,6 +10,7 @@ from api.database import get_db, SessionLocal
 from api.models import Identity, PipelineRun
 from api.services.pipeline_runner import run_pipeline
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/pipeline", tags=["pipeline"])
 
 
@@ -43,42 +45,82 @@ async def run(req: PipelineRequest, db: Session = Depends(get_db)):
         succeeded = 0
         failed = 0
         total_articles = 0
-        async for event in run_pipeline(person_ids, mode=req.mode, run_id=run_id):
-            # Track run status from events
-            if event.get("type") == "started":
-                # Transition to RUNNING (per D-05)
+        finished_cleanly = False
+        try:
+            async for event in run_pipeline(person_ids, mode=req.mode, run_id=run_id):
+                # Track run status from events
+                if event.get("type") == "started":
+                    # Transition to RUNNING (per D-05)
+                    update_db = SessionLocal()
+                    try:
+                        run_row = update_db.query(PipelineRun).filter_by(run_id=run_id).first()
+                        if run_row:
+                            run_row.status = "RUNNING"
+                            run_row.started_at = datetime.utcnow()
+                        update_db.commit()
+                    finally:
+                        update_db.close()
+                elif event.get("type") == "complete_one":
+                    if event.get("error"):
+                        failed += 1
+                    else:
+                        succeeded += 1
+                        total_articles += event.get("article_count", 0)
+                elif event.get("type") == "finished":
+                    # Transition to COMPLETED, but only if the run is still
+                    # RUNNING. If the user cancelled mid-run, the row is
+                    # PARTIAL and the cancel intent must be preserved (CR-05).
+                    update_db = SessionLocal()
+                    try:
+                        run_row = update_db.query(PipelineRun).filter_by(run_id=run_id).first()
+                        if run_row and run_row.status == "RUNNING":
+                            run_row.status = "COMPLETED"
+                            run_row.completed_at = datetime.utcnow()
+                        if run_row:
+                            # Always backfill counts so PARTIAL runs still show
+                            # accurate succeeded/failed/articles totals.
+                            run_row.researchers_succeeded = succeeded
+                            run_row.researchers_failed = failed
+                            run_row.total_articles = total_articles
+                        update_db.commit()
+                    finally:
+                        update_db.close()
+                    finished_cleanly = True
+                yield f"data: {json.dumps(event)}\n\n"
+        except Exception:
+            # Generator died before emitting `finished`. Surface as FAILED so
+            # the row doesn't sit in RUNNING forever (WR-08).
+            logger.exception("Pipeline run %s failed", run_id)
+            raise
+        finally:
+            if not finished_cleanly:
                 update_db = SessionLocal()
                 try:
                     run_row = update_db.query(PipelineRun).filter_by(run_id=run_id).first()
-                    if run_row:
-                        run_row.status = "RUNNING"
-                        run_row.started_at = datetime.utcnow()
-                    update_db.commit()
-                finally:
-                    update_db.close()
-            elif event.get("type") == "complete_one":
-                if event.get("error"):
-                    failed += 1
-                else:
-                    succeeded += 1
-                    total_articles += event.get("article_count", 0)
-            elif event.get("type") == "finished":
-                # Transition to COMPLETED (per D-06)
-                update_db = SessionLocal()
-                try:
-                    run_row = update_db.query(PipelineRun).filter_by(run_id=run_id).first()
-                    if run_row:
-                        run_row.status = "COMPLETED"
+                    if run_row and run_row.status in ("PENDING", "RUNNING"):
+                        run_row.status = "FAILED"
                         run_row.completed_at = datetime.utcnow()
                         run_row.researchers_succeeded = succeeded
                         run_row.researchers_failed = failed
                         run_row.total_articles = total_articles
-                    update_db.commit()
+                        update_db.commit()
                 finally:
                     update_db.close()
-            yield f"data: {json.dumps(event)}\n\n"
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+@router.post("/{run_id}/cancel")
+def cancel(run_id: int, db: Session = Depends(get_db)):
+    run_row = db.query(PipelineRun).filter_by(run_id=run_id).first()
+    if not run_row:
+        return {"error": "Run not found"}
+    if run_row.status in ("COMPLETED", "FAILED"):
+        return {"status": run_row.status, "message": "Run already finished"}
+    run_row.status = "PARTIAL"
+    run_row.completed_at = datetime.utcnow()
+    db.commit()
+    return {"status": "PARTIAL", "run_id": run_id}
 
 
 def get_assertion_count(db: Session) -> int:

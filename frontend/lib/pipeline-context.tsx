@@ -86,6 +86,11 @@ export function PipelineProvider({ children }: { children: ReactNode }) {
   const nextToStartRef = useRef<number>(0);
   const lastCompletionTimeRef = useRef<number | null>(null);
   const abortRef = useRef<(() => void) | null>(null);
+  // Mirror currentRunId in a ref so cancelPipeline always sees the latest value.
+  // Without this, a cancel that fires before React re-renders the cancel
+  // callback (after the SSE `started` event arrived) would skip the backend
+  // status PATCH and leave the run in RUNNING.
+  const currentRunIdRef = useRef<number | null>(null);
 
   function addLog(msg: string, type: LogEntry["type"] = "info") {
     const t = new Date().toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
@@ -100,6 +105,7 @@ export function PipelineProvider({ children }: { children: ReactNode }) {
     setResearcherStartTimes({});
     setMaxWorkers(null);
     setCurrentRunId(null);
+    currentRunIdRef.current = null;
     setProcessingSet(new Set());
     setLogLines([]);
     setPipelineFinished(false);
@@ -123,7 +129,9 @@ export function PipelineProvider({ children }: { children: ReactNode }) {
         if (event.type === "started") {
           const mw = (event.max_workers as number) ?? 3;
           setMaxWorkers(mw);
-          setCurrentRunId((event.run_id as number) ?? null);
+          const rid = (event.run_id as number) ?? null;
+          setCurrentRunId(rid);
+          currentRunIdRef.current = rid;
           lastCompletionTimeRef.current = Date.now();
           const initialIds = personIdsRef.current.slice(0, mw);
           setProcessingSet(new Set(initialIds));
@@ -245,14 +253,16 @@ export function PipelineProvider({ children }: { children: ReactNode }) {
     setRunning(false);
     setProcessingSet(new Set());
     addLog("Pipeline cancelled by user", "error");
-    // Update backend run status if we have a run ID (best-effort, ignore failures)
-    if (currentRunId) {
-      fetch(`${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8090"}/api/pipeline/${currentRunId}/cancel`, {
+    // Read run id from the ref to dodge the stale-closure window where the
+    // SSE `started` event has set state but React hasn't re-rendered yet.
+    const runId = currentRunIdRef.current;
+    if (runId) {
+      fetch(`${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8090"}/api/pipeline/${runId}/cancel`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
       }).catch(() => {});
     }
-  }, [currentRunId]);
+  }, []);
 
   // Load researchers on first mount
   useEffect(() => {
