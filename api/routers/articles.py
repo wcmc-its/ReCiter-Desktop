@@ -6,6 +6,7 @@ import uuid
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 import pandas as pd
 
@@ -50,32 +51,44 @@ def _read_dataframe(content: bytes, filename: str) -> pd.DataFrame:
 
 
 def _store_article(db: Session, art) -> bool:
-    """Store a core.Article to the DB. Returns True if new."""
+    """Insert an article. Returns True if newly stored, False if it
+    already exists.
+
+    Uses a savepoint so a race with a concurrent import (both checked
+    "not exists" then both INSERTed the same pmid) raises IntegrityError
+    on the inner write only, not the whole chunk transaction. The losing
+    side just reports "not new" and moves on.
+    """
     pmid_str = str(art.pmid)
-    existing = db.query(Article).filter_by(pmid=pmid_str).first()
-    if existing:
+    if db.query(Article).filter_by(pmid=pmid_str).first():
         return False
-    db.add(Article(
-        pmid=pmid_str,
-        title=art.title,
-        journal=art.journal_title,
-        pub_year=art.pub_year,
-        doi=art.doi,
-        abstract_text=art.abstract,
-        authors=[{
-            "first_name": a.first_name, "last_name": a.last_name,
-            "initials": a.initials, "affiliation": a.affiliation,
-            "orcid": getattr(a, "orcid", ""),
-        } for a in art.authors],
-        mesh_headings=[{
-            "descriptor_name": m.descriptor_name,
-            "major_topic": m.major_topic,
-        } for m in art.mesh_headings] if art.mesh_headings else [],
-        keywords=art.keywords or [],
-        grants=art.grants or [],
-        publication_types=art.publication_types or [],
-    ))
-    return True
+    try:
+        with db.begin_nested():
+            db.add(Article(
+                pmid=pmid_str,
+                title=art.title,
+                journal=art.journal_title,
+                pub_year=art.pub_year,
+                doi=art.doi,
+                abstract_text=art.abstract,
+                authors=[{
+                    "first_name": a.first_name, "last_name": a.last_name,
+                    "initials": a.initials, "affiliation": a.affiliation,
+                    "orcid": getattr(a, "orcid", ""),
+                } for a in art.authors],
+                mesh_headings=[{
+                    "descriptor_name": m.descriptor_name,
+                    "major_topic": m.major_topic,
+                } for m in art.mesh_headings] if art.mesh_headings else [],
+                keywords=art.keywords or [],
+                grants=art.grants or [],
+                publication_types=art.publication_types or [],
+            ))
+        return True
+    except IntegrityError:
+        # Lost the insert race to another concurrent importer; the
+        # article is now in the DB, just not from us.
+        return False
 
 
 @router.post("/upload")
@@ -202,7 +215,11 @@ def import_articles(req: ImportRequest):
                     # and yield them on the next iteration.
                     CHUNK = 200
                     chunks = [new_pmids[i:i + CHUNK] for i in range(0, len(new_pmids), CHUNK)]
-                    fetched_total = 0
+                    # Progress reflects PMIDs *requested* (always reaches
+                    # len(new_pmids)) rather than Articles *parsed* — PubMed
+                    # can silently drop suppressed/retracted PMIDs, so a
+                    # parsed-only counter never hits 100% on a successful run.
+                    requested_total = 0
                     for chunk_idx, chunk in enumerate(chunks, start=1):
                         progress_events.clear()
                         fetched = fetch_articles(chunk, api_key=api_key or "", on_batch=on_batch)
@@ -210,14 +227,14 @@ def import_articles(req: ImportRequest):
                             if _store_article(db, art):
                                 article_count += 1
                         db.commit()
-                        fetched_total += len(fetched)
+                        requested_total += len(chunk)
                         # Flush any per-batch events from the fetcher (one per chunk here)
                         for ev in progress_events:
                             merged = {
                                 "type": "fetch_progress",
                                 "batch": chunk_idx,
                                 "batches": len(chunks),
-                                "fetched": fetched_total,
+                                "fetched": requested_total,
                                 "total": len(new_pmids),
                             }
                             if "error" in ev:

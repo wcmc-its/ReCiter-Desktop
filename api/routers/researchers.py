@@ -31,6 +31,14 @@ class ImportRequest(BaseModel):
     import_gold_standard: bool = False
 
 
+def _read_full(content: bytes, filename: str) -> pd.DataFrame:
+    if filename.endswith((".xlsx", ".xls")):
+        return pd.read_excel(io.BytesIO(content))
+    if filename.endswith(".tsv"):
+        return pd.read_csv(io.BytesIO(content), sep="\t")
+    return pd.read_csv(io.BytesIO(content))
+
+
 @router.post("/upload")
 async def upload_file(file: UploadFile = File(...)):
     file_id = f"upload_{uuid.uuid4().hex[:12]}"
@@ -38,44 +46,27 @@ async def upload_file(file: UploadFile = File(...)):
     content = await save_upload_streaming(file, filepath)
 
     filename = file.filename or "upload.csv"
-    if filename.endswith((".xlsx", ".xls")):
-        df = pd.read_excel(io.BytesIO(content), nrows=5)
-    elif filename.endswith(".tsv"):
-        df = pd.read_csv(io.BytesIO(content), sep="\t", nrows=5)
-    else:
-        df = pd.read_csv(io.BytesIO(content), nrows=5)
+    # Single full parse — derive headers, preview, gold-standard count,
+    # and row count from one DataFrame instead of reparsing 3-4 times.
+    df = _read_full(content, filename)
 
     headers = list(df.columns)
     mappings = detect_mappings(headers)
     preview_rows = df.head(3).fillna("").to_dict(orient="records")
 
     has_gold_standard = (
-        mappings.get(next((h for h in headers if mappings.get(h) == "pmid"), "")) == "pmid"
-        and mappings.get(next((h for h in headers if mappings.get(h) == "assertion"), "")) == "assertion"
+        any(mappings.get(h) == "pmid" for h in headers)
+        and any(mappings.get(h) == "assertion" for h in headers)
     )
     gold_standard_count = 0
     if has_gold_standard:
-        if filename.endswith((".xlsx", ".xls")):
-            full_df = pd.read_excel(io.BytesIO(content))
-        elif filename.endswith(".tsv"):
-            full_df = pd.read_csv(io.BytesIO(content), sep="\t")
-        else:
-            full_df = pd.read_csv(io.BytesIO(content))
         assertion_col = next(h for h in headers if mappings.get(h) == "assertion")
-        gold_standard_count = int(full_df[assertion_col].notna().sum())
-
-    # Get full row count
-    if filename.endswith((".xlsx", ".xls")):
-        row_count = len(pd.read_excel(io.BytesIO(content)))
-    elif filename.endswith(".tsv"):
-        row_count = len(pd.read_csv(io.BytesIO(content), sep="\t"))
-    else:
-        row_count = len(pd.read_csv(io.BytesIO(content)))
+        gold_standard_count = int(df[assertion_col].notna().sum())
 
     return {
         "file_id": file_id,
         "filename": filename,
-        "row_count": row_count,
+        "row_count": int(len(df)),
         "mappings": [
             {"original": h, "canonical": mappings.get(h), "sample": str(preview_rows[0].get(h, "")) if preview_rows else ""}
             for h in headers

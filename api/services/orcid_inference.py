@@ -12,12 +12,12 @@ Confidence tiers:
   - unreliable: only in rejected/low-score articles, or competing ORCIDs
 """
 import math
-from collections import Counter, defaultdict
+from collections import defaultdict
 from typing import Any
 
 from sqlalchemy.orm import Session
 
-from api.models import Identity, Article, PersonArticle, PersonArticleScore
+from api.models import Identity, Article, PersonArticle, PersonArticleScore, Curation
 
 
 def _wilson_lower_bound(successes: int, failures: int, z: float = 1.96) -> float:
@@ -50,25 +50,32 @@ def _compute_confidence(
     return score, tier
 
 
-def infer_orcids(db: Session, score_threshold: float = 0.95) -> list[dict[str, Any]]:
+def infer_orcids(
+    db: Session,
+    score_threshold: float = 0.95,
+    use_curations: bool = False,
+) -> list[dict[str, Any]]:
     """
     Infer ORCIDs for all researchers based on target author position.
-
-    For each researcher:
-    1. Get their scored articles
-    2. Find which author position was identified as the target
-    3. Check if that author has an ORCID in PubMed data
-    4. Aggregate across articles to compute confidence
 
     Args:
         db: Database session
         score_threshold: Score above which an article counts as "accepted"
-                        (for institutions without curation data)
+                        (used when use_curations is False)
+        use_curations: If True, use human accept/reject decisions instead of
+                      score threshold. More reliable when curation data exists.
 
     Returns:
         List of dicts with person_id, orcid, confidence, tier, article counts
     """
     identities = db.query(Identity).all()
+
+    # Pre-load all curations into a lookup if using curated mode
+    curation_map: dict[tuple[str, str], str] = {}
+    if use_curations:
+        for c in db.query(Curation).all():
+            curation_map[(c.person_id, c.pmid)] = c.assertion
+
     results = []
 
     for identity in identities:
@@ -118,36 +125,50 @@ def infer_orcids(db: Session, score_threshold: float = 0.95) -> list[dict[str, A
             if not orcid or len(orcid) < 10:
                 continue
 
-            cal_score = score.calibrated_score or 0
-            if cal_score >= score_threshold:
-                orcid_evidence[orcid]["accepted"] += 1
+            if use_curations:
+                assertion = curation_map.get((person_id, article.pmid), "")
+                if assertion.upper() == "ACCEPTED":
+                    orcid_evidence[orcid]["accepted"] += 1
+                elif assertion.upper() == "REJECTED":
+                    orcid_evidence[orcid]["rejected"] += 1
+                else:
+                    continue  # skip uncurated articles in feedback mode
             else:
-                orcid_evidence[orcid]["rejected"] += 1
+                cal_score = score.calibrated_score or 0
+                if cal_score >= score_threshold:
+                    orcid_evidence[orcid]["accepted"] += 1
+                else:
+                    orcid_evidence[orcid]["rejected"] += 1
             orcid_evidence[orcid]["pmids"].append(article.pmid)
 
         if not orcid_evidence:
             continue
 
+        # Pick the single best ORCID: most accepted articles, fewest rejected
         n_distinct = len(orcid_evidence)
-        for orcid, data in orcid_evidence.items():
-            conf_score, tier = _compute_confidence(
-                data["accepted"], data["rejected"], n_distinct
-            )
-            results.append({
-                "person_id": person_id,
-                "first_name": identity.first_name,
-                "last_name": identity.last_name,
-                "orcid": orcid,
-                "confidence_score": conf_score,
-                "confidence_tier": tier,
-                "accepted_articles": data["accepted"],
-                "rejected_articles": data["rejected"],
-                "total_articles": data["accepted"] + data["rejected"],
-                "identity_orcid": identity.orcid or "",
-                "orcid_matches_identity": (
-                    identity.orcid and orcid == identity.orcid.replace("https://orcid.org/", "").replace("http://orcid.org/", "").strip()
-                ),
-            })
+        best_orcid = max(
+            orcid_evidence.items(),
+            key=lambda x: (x[1]["accepted"], -x[1]["rejected"]),
+        )
+        orcid, data = best_orcid
+        conf_score, tier = _compute_confidence(
+            data["accepted"], data["rejected"], n_distinct
+        )
+        results.append({
+            "person_id": person_id,
+            "first_name": identity.first_name,
+            "last_name": identity.last_name,
+            "orcid": orcid,
+            "confidence_score": conf_score,
+            "confidence_tier": tier,
+            "accepted_articles": data["accepted"],
+            "rejected_articles": data["rejected"],
+            "total_articles": data["accepted"] + data["rejected"],
+            "identity_orcid": identity.orcid or "",
+            "orcid_matches_identity": bool(
+                identity.orcid and orcid == identity.orcid.replace("https://orcid.org/", "").replace("http://orcid.org/", "").strip()
+            ),
+        })
 
     # Sort by confidence score descending
     results.sort(key=lambda x: (-x["confidence_score"], x["person_id"]))

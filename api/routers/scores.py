@@ -5,10 +5,24 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from api.database import get_db
-from api.models import Identity, Article, PersonArticle, PersonArticleScore
+from api.models import Identity, Article, PersonArticle, PersonArticleScore, Curation
 from api.services.orcid_inference import infer_orcids
 
 router = APIRouter(prefix="/api/scores", tags=["scores"])
+
+
+_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _safe_cell(v):
+    """Prefix a leading single-quote to cells starting with characters
+    Excel/Sheets would interpret as a formula. Free-text fields like
+    Article.title come from PubMed and could in principle start with `=`
+    or similar, leading to formula injection when the CSV is opened.
+    """
+    if isinstance(v, str) and v and v[0] in _FORMULA_PREFIXES:
+        return "'" + v
+    return v
 
 
 @router.get("/export")
@@ -38,14 +52,14 @@ def export_scores(
     ])
 
     for r in results:
-        score = round(r.PersonArticleScore.calibrated_score * 100) if r.PersonArticleScore.calibrated_score else 0
+        score = round(r.PersonArticleScore.calibrated_score * 100, 1) if r.PersonArticleScore.calibrated_score else 0
         if score >= threshold:
-            writer.writerow([
+            writer.writerow([_safe_cell(v) for v in (
                 r.Identity.person_id, r.Identity.first_name, r.Identity.last_name,
                 r.PersonArticleScore.pmid, r.Article.title, r.Article.journal,
                 r.Article.pub_year, score,
                 f"https://pubmed.ncbi.nlm.nih.gov/{r.PersonArticleScore.pmid}/",
-            ])
+            )])
 
     output.seek(0)
     return StreamingResponse(
@@ -56,8 +70,9 @@ def export_scores(
 
 
 @router.get("/orcid-report")
-def orcid_report(db: Session = Depends(get_db)):
-    results = infer_orcids(db)
+def orcid_report(mode: str = "feedback", db: Session = Depends(get_db)):
+    use_curations = mode == "feedback"
+    results = infer_orcids(db, use_curations=use_curations)
     tier_counts = {}
     for r in results:
         t = r["confidence_tier"]
@@ -70,8 +85,9 @@ def orcid_report(db: Session = Depends(get_db)):
 
 
 @router.get("/orcid-report/export")
-def export_orcid_report(db: Session = Depends(get_db)):
-    results = infer_orcids(db)
+def export_orcid_report(mode: str = "feedback", db: Session = Depends(get_db)):
+    use_curations = mode == "feedback"
+    results = infer_orcids(db, use_curations=use_curations)
     output = io.StringIO()
     writer = csv.writer(output)
     writer.writerow([
@@ -81,13 +97,13 @@ def export_orcid_report(db: Session = Depends(get_db)):
         "identity_orcid", "orcid_matches_identity", "orcid_link",
     ])
     for r in results:
-        writer.writerow([
+        writer.writerow([_safe_cell(v) for v in (
             r["person_id"], r["first_name"], r["last_name"], r["orcid"],
             r["confidence_tier"], r["confidence_score"],
             r["accepted_articles"], r["rejected_articles"], r["total_articles"],
             r["identity_orcid"], r["orcid_matches_identity"],
             f"https://orcid.org/{r['orcid']}",
-        ])
+        )])
     output.seek(0)
     return StreamingResponse(
         iter([output.getvalue()]),
@@ -99,8 +115,13 @@ def export_orcid_report(db: Session = Depends(get_db)):
 @router.get("/{person_id}")
 def get_scores(person_id: str, db: Session = Depends(get_db)):
     scores = (
-        db.query(PersonArticleScore, Article)
+        db.query(PersonArticleScore, Article, Curation)
         .join(Article, PersonArticleScore.pmid == Article.pmid)
+        .outerjoin(
+            Curation,
+            (PersonArticleScore.person_id == Curation.person_id)
+            & (PersonArticleScore.pmid == Curation.pmid),
+        )
         .filter(PersonArticleScore.person_id == person_id)
         .order_by(PersonArticleScore.calibrated_score.desc())
         .all()
@@ -109,13 +130,14 @@ def get_scores(person_id: str, db: Session = Depends(get_db)):
     return [
         {
             "pmid": s.PersonArticleScore.pmid,
-            "score": round(s.PersonArticleScore.calibrated_score * 100) if s.PersonArticleScore.calibrated_score else 0,
+            "score": round(s.PersonArticleScore.calibrated_score * 100, 1) if s.PersonArticleScore.calibrated_score else 0,
             "model_type": s.PersonArticleScore.model_type,
             "title": s.Article.title,
             "journal": s.Article.journal,
             "pub_year": s.Article.pub_year,
             "doi": s.Article.doi,
             "features": s.PersonArticleScore.features or {},
+            "assertion": s.Curation.assertion if s.Curation else None,
         }
         for s in scores
     ]

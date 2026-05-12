@@ -83,26 +83,29 @@ export function ColumnMapper({
               {m.original}
             </code>
             <span className="text-gray-400 text-center">{"\u2192"}</span>
-            {m.canonical ? (
-              <span className="text-sm text-green-700">{m.canonical}</span>
-            ) : (
-              <select
-                className="bg-white text-amber-700 border border-amber-300 rounded px-2 py-1 text-sm disabled:opacity-50"
-                value=""
-                disabled={disabled}
-                onChange={(e) =>
-                  onMappingChange(i, e.target.value || null)
-                }
-              >
-                <option value="">-- Select mapping --</option>
-                {availableFields.map((f) => (
-                  <option key={f} value={f}>
-                    {f}
-                  </option>
-                ))}
-                <option value="__skip">Skip this column</option>
-              </select>
-            )}
+            <select
+              className={
+                m.canonical
+                  ? "bg-white text-green-700 border border-gray-200 rounded px-2 py-1 text-sm disabled:opacity-50"
+                  : "bg-white text-amber-700 border border-amber-300 rounded px-2 py-1 text-sm disabled:opacity-50"
+              }
+              value={m.canonical ?? ""}
+              disabled={disabled}
+              onChange={(e) => {
+                const v = e.target.value;
+                // "__skip" and "" both clear the canonical mapping. Storing
+                // "__skip" verbatim would create a junk dataframe column.
+                onMappingChange(i, v === "" || v === "__skip" ? null : v);
+              }}
+            >
+              <option value="">-- Select mapping --</option>
+              {availableFields.map((f) => (
+                <option key={f} value={f}>
+                  {f}
+                </option>
+              ))}
+              <option value="__skip">Skip this column</option>
+            </select>
             <span className="text-xs text-gray-400 font-mono truncate">
               {m.sample}
             </span>

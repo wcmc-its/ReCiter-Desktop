@@ -74,7 +74,7 @@ export default function OrcidPage() {
         <div className="flex items-center justify-between mb-2">
           <h2 className="text-2xl font-semibold text-gray-900">ORCID Inference</h2>
           {report && report.total_with_orcid > 0 && (
-            <a href={apiExportUrl("/api/scores/orcid-report/export")} download>
+            <a href={apiExportUrl("/api/scores/orcid-report/export", { mode })} download>
               <Button variant="outline" size="sm">Export CSV</Button>
             </a>
           )}
