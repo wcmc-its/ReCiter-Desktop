@@ -14,9 +14,9 @@ export function ScoreBadge({ score }: { score: number }) {
   }
   return (
     <span
-      className={`inline-block w-12 text-center py-1 rounded text-sm font-semibold ${bg} ${text}`}
+      className={`inline-block w-14 text-center py-1 rounded text-sm font-semibold ${bg} ${text}`}
     >
-      {score}
+      {score % 1 === 0 ? score : score.toFixed(1)}
     </span>
   );
 }
