@@ -10,6 +10,7 @@ import { FileUpload } from "@/components/file-upload";
 import { ColumnMapper } from "@/components/column-mapper";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { apiUpload, apiFetch } from "@/lib/api";
+import { subscribeSSE } from "@/lib/sse";
 import { PrerequisiteGate } from "@/components/prerequisite-gate";
 import { useWorkflow } from "@/lib/workflow";
 
@@ -58,11 +59,18 @@ export default function ResearchersPage() {
   const [importResult, setImportResult] = useState<{
     identity_count: number;
     curation_count: number;
+    articles_fetched?: number;
+    links_created?: number;
+    total_pmids?: number;
   } | null>(null);
   const [parsing, setParsing] = useState(false);
   const [parsingFilename, setParsingFilename] = useState<string | null>(null);
   const [parseError, setParseError] = useState<string | null>(null);
   const [confirmReplace, setConfirmReplace] = useState(false);
+  const [loadingSample, setLoadingSample] = useState(false);
+  const [sampleError, setSampleError] = useState<string | null>(null);
+  const [sampleStatus, setSampleStatus] = useState<string | null>(null);
+  const [sampleProgress, setSampleProgress] = useState<{ fetched: number; total: number } | null>(null);
 
   useEffect(() => {
     if (researcherCount > 0 && !replacing && !importResult) {
@@ -93,6 +101,41 @@ export default function ResearchersPage() {
     } finally {
       setParsing(false);
     }
+  }
+
+  function handleLoadSample() {
+    setSampleError(null);
+    setSampleStatus(null);
+    setSampleProgress(null);
+    setLoadingSample(true);
+
+    subscribeSSE(
+      "/api/researchers/load-sample",
+      {},
+      (event) => {
+        if (event.type === "status") {
+          setSampleStatus(event.message as string);
+        } else if (event.type === "fetch_progress") {
+          setSampleProgress({
+            fetched: event.fetched as number,
+            total: event.total as number,
+          });
+        } else if (event.type === "error") {
+          setSampleError(event.message as string);
+        } else if (event.type === "complete") {
+          setImportResult({
+            identity_count: event.identity_count as number,
+            curation_count: event.curations_imported as number,
+            articles_fetched: event.articles_fetched as number,
+            links_created: event.links_created as number,
+            total_pmids: event.total_pmids as number,
+          });
+        }
+      },
+      () => {
+        setLoadingSample(false);
+      }
+    );
   }
 
   async function handleImport() {
@@ -128,6 +171,14 @@ export default function ResearchersPage() {
             <p className="text-green-700 text-lg font-medium mb-2">
               {importResult.identity_count} researchers loaded
             </p>
+            {importResult.articles_fetched !== undefined && (
+              <p className="text-green-600 text-sm">
+                {importResult.articles_fetched} articles fetched from PubMed
+                {typeof importResult.links_created === "number" && (
+                  <> &bull; {importResult.links_created} researcher-article links</>
+                )}
+              </p>
+            )}
             {importResult.curation_count > 0 && (
               <p className="text-green-600 text-sm">
                 {importResult.curation_count} curation records imported
@@ -378,11 +429,50 @@ export default function ResearchersPage() {
             </CardContent>
           </Card>
         ) : (
-          <FileUpload
-            onFileSelected={handleFile}
-            description="Your faculty roster or researcher list — one person per row. At minimum, include a unique ID, first name, and last name. Optional: email, title, primary institution, department, doctoral year, ORCID."
-            templateHref="/researcher-template.csv"
-          />
+          <>
+            <FileUpload
+              onFileSelected={handleFile}
+              description="Your faculty roster or researcher list — one person per row. At minimum, include a unique ID, first name, and last name. Optional: email, title, primary institution, department, doctoral year, ORCID."
+              templateHref="/researcher-template.csv"
+            />
+            <div className="mt-4 flex items-center gap-3 text-xs text-gray-500">
+              <span>Don&apos;t have a roster handy?</span>
+              <button
+                type="button"
+                onClick={handleLoadSample}
+                disabled={loadingSample}
+                className="px-3 py-1.5 rounded border border-gray-300 text-gray-700 hover:bg-gray-50 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
+              >
+                {loadingSample ? "Loading sample data…" : "Load sample data"}
+              </button>
+              <span className="text-gray-400">
+                5 Weill Cornell researchers · ~1,000 curated assertions
+              </span>
+            </div>
+            {loadingSample && (
+              <div className="mt-3 space-y-1.5 text-xs text-gray-500">
+                {sampleStatus && <p>{sampleStatus}</p>}
+                {sampleProgress && sampleProgress.total > 0 && (
+                  <div className="flex items-center gap-2">
+                    <div className="flex-1 h-1.5 rounded bg-gray-200 overflow-hidden max-w-xs">
+                      <div
+                        className="h-full bg-[#cf4520] transition-all"
+                        style={{
+                          width: `${Math.min(100, Math.round((sampleProgress.fetched / sampleProgress.total) * 100))}%`,
+                        }}
+                      />
+                    </div>
+                    <span className="font-mono text-gray-400">
+                      {sampleProgress.fetched} / {sampleProgress.total} PMIDs
+                    </span>
+                  </div>
+                )}
+              </div>
+            )}
+            {sampleError && (
+              <p className="mt-2 text-xs text-red-600">{sampleError}</p>
+            )}
+          </>
         )
       ) : (
         <div className="space-y-6">
