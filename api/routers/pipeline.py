@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from api.database import get_db, SessionLocal
 from api.models import Identity, PipelineRun
-from api.services.pipeline_runner import run_pipeline
+from api.services.pipeline_runner import run_pipeline, signal_cancel
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/pipeline", tags=["pipeline"])
@@ -61,7 +61,11 @@ async def run(req: PipelineRequest, db: Session = Depends(get_db)):
                     finally:
                         update_db.close()
                 elif event.get("type") == "complete_one":
-                    if event.get("error"):
+                    if event.get("cancelled"):
+                        # Researcher short-circuited because the run was
+                        # cancelled. Don't count toward succeeded or failed.
+                        pass
+                    elif event.get("error"):
                         failed += 1
                     else:
                         succeeded += 1
@@ -117,10 +121,15 @@ def cancel(run_id: int, db: Session = Depends(get_db)):
         return {"error": "Run not found"}
     if run_row.status in ("COMPLETED", "FAILED"):
         return {"status": run_row.status, "message": "Run already finished"}
+    # Signal in-flight cancel so queued + mid-phase tasks short-circuit
+    # before they spend more PubMed quota or write more scores (see #13).
+    # The pipeline runner's cancel event is process-local; signal_cancel
+    # is a no-op if the run finished or is owned by a different process.
+    propagated = signal_cancel(run_id)
     run_row.status = "PARTIAL"
     run_row.completed_at = datetime.utcnow()
     db.commit()
-    return {"status": "PARTIAL", "run_id": run_id}
+    return {"status": "PARTIAL", "run_id": run_id, "propagated": propagated}
 
 
 def get_assertion_count(db: Session) -> int:

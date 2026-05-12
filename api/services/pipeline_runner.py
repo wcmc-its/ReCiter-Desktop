@@ -8,6 +8,7 @@ import json
 import logging
 import os
 import sys
+import threading
 from asyncio import as_completed as _as_completed
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
@@ -36,6 +37,34 @@ from core.config import load_config
 logger = logging.getLogger(__name__)
 
 # MAX_WORKERS module-level constant removed — now adaptive per run (D-12)
+
+# Per-run cancel events. /api/pipeline/{run_id}/cancel sets the event;
+# _process_one_researcher and run_pipeline check it between phases to stop
+# in-flight and queued work without waiting for the executor to drain. See #13.
+_CANCEL_EVENTS: dict[int, threading.Event] = {}
+_CANCEL_EVENTS_LOCK = threading.Lock()
+
+
+def _register_cancel_event(run_id: int) -> threading.Event:
+    event = threading.Event()
+    with _CANCEL_EVENTS_LOCK:
+        _CANCEL_EVENTS[run_id] = event
+    return event
+
+
+def _unregister_cancel_event(run_id: int) -> None:
+    with _CANCEL_EVENTS_LOCK:
+        _CANCEL_EVENTS.pop(run_id, None)
+
+
+def signal_cancel(run_id: int) -> bool:
+    """Signal in-flight cancel for a run. Returns True if a live event was set."""
+    with _CANCEL_EVENTS_LOCK:
+        event = _CANCEL_EVENTS.get(run_id)
+    if event is None:
+        return False
+    event.set()
+    return True
 
 
 def _db_identity_to_core(db_identity: Identity) -> CoreIdentity:
@@ -94,11 +123,22 @@ def _process_one_researcher(
     config: dict,
     model_dir: str,
     run_id: int | None = None,
+    cancel_event: threading.Event | None = None,
 ) -> dict:
     """
     Process a single researcher through the full pipeline.
     Runs in a thread. Returns a result dict.
+
+    cancel_event is checked between phases. When set, the task short-circuits
+    with {"cancelled": True} so PubMed quota and CPU are not spent on work the
+    user has already abandoned.
     """
+    def _cancelled() -> bool:
+        return cancel_event is not None and cancel_event.is_set()
+
+    if _cancelled():
+        return {"person_id": person_id, "cancelled": True}
+
     db = SessionLocal()
     try:
         identity = db.query(Identity).filter_by(person_id=person_id).first()
@@ -110,6 +150,8 @@ def _process_one_researcher(
         api_key = get_pubmed_api_key(db)
 
         # Phase 1: Retrieve articles
+        if _cancelled():
+            return {"person_id": person_id, "cancelled": True}
         person_articles = db.query(PersonArticle).filter_by(person_id=person_id).all()
         existing_pmids = {pa.pmid for pa in person_articles}
 
@@ -212,6 +254,8 @@ def _process_one_researcher(
             }
 
         # Phase 2: Target author matching
+        if _cancelled():
+            return {"person_id": person_id, "cancelled": True}
         for art in core_articles:
             idx = identify_target_author(art, core_identity)
             art.target_author_index = idx
@@ -224,6 +268,8 @@ def _process_one_researcher(
         db.commit()
 
         # Phase 3: Feature generation
+        if _cancelled():
+            return {"person_id": person_id, "cancelled": True}
         curations = db.query(Curation).filter_by(person_id=person_id).all()
         has_curations = len(curations) > 0
         curation_map = {c.pmid: c.assertion for c in curations}
@@ -246,6 +292,8 @@ def _process_one_researcher(
             }
 
         # Phase 4: Scoring
+        if _cancelled():
+            return {"person_id": person_id, "cancelled": True}
         curated_dict = {c.pmid: c.assertion for c in curations} if has_curations else {}
         scored_df = score_articles(
             feature_rows,
@@ -356,6 +404,13 @@ async def run_pipeline(
     total = len(person_ids)
     completed = 0
 
+    # Per-run cancel event — set by /api/pipeline/{run_id}/cancel; checked
+    # by each _process_one_researcher between phases. Registered only when
+    # run_id is known so the cancel endpoint can find it.
+    cancel_event: threading.Event | None = None
+    if run_id is not None:
+        cancel_event = _register_cancel_event(run_id)
+
     yield {
         "type": "started",
         "total": total,
@@ -367,37 +422,42 @@ async def run_pipeline(
     loop = asyncio.get_event_loop()
     executor = ThreadPoolExecutor(max_workers=max_workers)
 
-    # Submit all tasks
-    futures = {}
-    for pid in person_ids:
-        future = loop.run_in_executor(
-            executor, _process_one_researcher, pid, mode, config, model_dir, run_id
-        )
-        futures[pid] = future
-        yield {
-            "type": "queued",
-            "person_id": pid,
-        }
+    try:
+        # Submit all tasks
+        futures = {}
+        for pid in person_ids:
+            future = loop.run_in_executor(
+                executor, _process_one_researcher,
+                pid, mode, config, model_dir, run_id, cancel_event,
+            )
+            futures[pid] = future
+            yield {
+                "type": "queued",
+                "person_id": pid,
+            }
 
-    # Collect results in completion order (per D-11)
-    # processing event removed per D-13
-    all_futures = list(futures.values())
-    for coro in _as_completed(all_futures):
-        result = await coro
-        pid = result["person_id"]  # already in result dict
-        completed += 1
+        # Collect results in completion order (per D-11)
+        # processing event removed per D-13
+        all_futures = list(futures.values())
+        for coro in _as_completed(all_futures):
+            result = await coro
+            pid = result["person_id"]  # already in result dict
+            completed += 1
+            yield {
+                "type": "complete_one",
+                "person_id": pid,
+                "completed": completed,
+                "total": total,
+                **result,
+            }
+
+        executor.shutdown(wait=False)
         yield {
-            "type": "complete_one",
-            "person_id": pid,
+            "type": "finished",
             "completed": completed,
             "total": total,
-            **result,
+            "run_id": run_id,
         }
-
-    executor.shutdown(wait=False)
-    yield {
-        "type": "finished",
-        "completed": completed,
-        "total": total,
-        "run_id": run_id,
-    }
+    finally:
+        if run_id is not None:
+            _unregister_cancel_event(run_id)

@@ -408,11 +408,11 @@ export default function PipelinePage() {
         }
         preserved={[
           "Completed researchers and their scores remain in the database",
-          "Researchers already in flight will finish and be saved",
+          "Articles already retrieved from PubMed remain in the database",
         ]}
         destroyed={[
-          "Live progress in this window stops updating",
-          "Researchers not yet started will be skipped on the next run unless re-queued",
+          "In-flight work is dropped at the next phase boundary (no score is written for that researcher)",
+          "Researchers not yet started are skipped — re-queue them on the next run",
         ]}
         confirmLabel="Cancel run"
         cancelLabel="Keep running"
