@@ -125,8 +125,8 @@ def _process_one_researcher(
 
             # Retrieval thresholds from config (matches ReCiter application.properties)
             retrieval_config = config.get("retrieval", {})
-            lenient_threshold = retrieval_config.get("lenient_threshold", 2000)
-            strict_threshold = retrieval_config.get("strict_threshold", 1000)
+            lenient_threshold = retrieval_config.get("lenient_threshold", 3000)
+            strict_threshold = retrieval_config.get("strict_threshold", 1500)
 
             search_result = search_by_name(
                 first_name=core_identity.first_name,
@@ -331,6 +331,10 @@ async def run_pipeline(
                 config.setdefault("institution", {})["collaborating_keywords"] = val
             elif key == "institution_label":
                 config.setdefault("institution", {})["institution_label"] = val
+            elif key == "lenient_threshold" and isinstance(val, int):
+                config.setdefault("retrieval", {})["lenient_threshold"] = val
+            elif key == "strict_threshold" and isinstance(val, int):
+                config.setdefault("retrieval", {})["strict_threshold"] = val
     finally:
         db.close()
 

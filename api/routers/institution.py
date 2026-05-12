@@ -1,6 +1,6 @@
 import json
 import os
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -28,6 +28,17 @@ class ConfigureRequest(BaseModel):
     email_domains: list[str]
     institution_label: str
     pubmed_api_key: str | None = None
+    lenient_threshold: int | None = None
+    strict_threshold: int | None = None
+
+
+def _validate_thresholds(lenient: int | None, strict: int | None) -> None:
+    if lenient is not None and lenient <= 0:
+        raise HTTPException(status_code=400, detail="lenient_threshold must be a positive integer")
+    if strict is not None and strict <= 0:
+        raise HTTPException(status_code=400, detail="strict_threshold must be a positive integer")
+    if lenient is not None and strict is not None and strict > lenient:
+        raise HTTPException(status_code=400, detail="strict_threshold must be less than or equal to lenient_threshold")
 
 
 @router.post("/discover")
@@ -63,6 +74,12 @@ def configure(req: ConfigureRequest, db: Session = Depends(get_db)):
     if req.pubmed_api_key:
         config_pairs["pubmed_api_key"] = req.pubmed_api_key
 
+    _validate_thresholds(req.lenient_threshold, req.strict_threshold)
+    if req.lenient_threshold is not None:
+        config_pairs["lenient_threshold"] = json.dumps(req.lenient_threshold)
+    if req.strict_threshold is not None:
+        config_pairs["strict_threshold"] = json.dumps(req.strict_threshold)
+
     for key, value in config_pairs.items():
         existing = db.query(Institution).filter_by(config_key=key).first()
         if existing:
@@ -93,6 +110,27 @@ def update_api_key(req: ApiKeyRequest, db: Session = Depends(get_db)):
         existing.config_value = req.pubmed_api_key
     else:
         db.add(Institution(config_key="pubmed_api_key", config_value=req.pubmed_api_key))
+    db.commit()
+    return {"status": "ok"}
+
+
+class ThresholdsRequest(BaseModel):
+    lenient_threshold: int
+    strict_threshold: int
+
+
+@router.put("/retrieval-thresholds")
+def update_thresholds(req: ThresholdsRequest, db: Session = Depends(get_db)):
+    _validate_thresholds(req.lenient_threshold, req.strict_threshold)
+    for key, value in (
+        ("lenient_threshold", json.dumps(req.lenient_threshold)),
+        ("strict_threshold", json.dumps(req.strict_threshold)),
+    ):
+        existing = db.query(Institution).filter_by(config_key=key).first()
+        if existing:
+            existing.config_value = value
+        else:
+            db.add(Institution(config_key=key, config_value=value))
     db.commit()
     return {"status": "ok"}
 

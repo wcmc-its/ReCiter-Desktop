@@ -2,10 +2,12 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { Eye, EyeOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { apiFetch } from "@/lib/api";
 import { subscribeSSE } from "@/lib/sse";
 import { useWorkflow } from "@/lib/workflow";
@@ -18,7 +20,12 @@ interface InstitutionConfig {
   collaborating_institution_keywords: string[];
   collaborating_institution_names?: string[];
   pubmed_api_key?: string;
+  lenient_threshold?: number;
+  strict_threshold?: number;
 }
+
+const DEFAULT_LENIENT_THRESHOLD = 3000;
+const DEFAULT_STRICT_THRESHOLD = 1500;
 
 interface DiscoveredInstitution {
   name: string;
@@ -51,10 +58,32 @@ export default function SetupPage() {
   const [editingApiKey, setEditingApiKey] = useState(false);
   const [apiKeyInput, setApiKeyInput] = useState("");
   const [savingApiKey, setSavingApiKey] = useState(false);
+  const [showApiKey, setShowApiKey] = useState(false);
+  const [confirmReset, setConfirmReset] = useState(false);
+  const [lenientThreshold, setLenientThreshold] = useState<number>(DEFAULT_LENIENT_THRESHOLD);
+  const [strictThreshold, setStrictThreshold] = useState<number>(DEFAULT_STRICT_THRESHOLD);
+  const [editingThresholds, setEditingThresholds] = useState(false);
+  const [thresholdsInput, setThresholdsInput] = useState<{ lenient: number; strict: number }>({
+    lenient: DEFAULT_LENIENT_THRESHOLD,
+    strict: DEFAULT_STRICT_THRESHOLD,
+  });
+  const [savingThresholds, setSavingThresholds] = useState(false);
+  const [thresholdError, setThresholdError] = useState<string | null>(null);
+
+  const thresholdsValid =
+    Number.isInteger(thresholdsInput.lenient) &&
+    Number.isInteger(thresholdsInput.strict) &&
+    thresholdsInput.lenient > 0 &&
+    thresholdsInput.strict > 0 &&
+    thresholdsInput.strict <= thresholdsInput.lenient;
 
   useEffect(() => {
     if (institution && !editing) {
-      apiFetch<InstitutionConfig>("/api/institution").then(setConfig);
+      apiFetch<InstitutionConfig>("/api/institution").then((c) => {
+        setConfig(c);
+        if (typeof c.lenient_threshold === "number") setLenientThreshold(c.lenient_threshold);
+        if (typeof c.strict_threshold === "number") setStrictThreshold(c.strict_threshold);
+      });
     }
   }, [institution, editing]);
 
@@ -100,10 +129,6 @@ export default function SetupPage() {
   }
 
   async function resetConfig() {
-    const confirmed = window.confirm(
-      "Reset institution configuration?\n\nThis will clear all scores and retrieval history. Researchers and curations are preserved.\n\nYou will need to re-run retrieval and scoring after reconfiguring."
-    );
-    if (!confirmed) return;
     await apiFetch("/api/institution", { method: "DELETE" });
     setStep(1);
     setDomain("");
@@ -132,6 +157,8 @@ export default function SetupPage() {
             .map((d) => d.domain),
           institution_label: institutionName,
           pubmed_api_key: pubmedApiKey || undefined,
+          lenient_threshold: lenientThreshold,
+          strict_threshold: strictThreshold,
         }),
       });
       refresh();
@@ -234,13 +261,27 @@ export default function SetupPage() {
               </div>
               {editingApiKey ? (
                 <div className="flex gap-2 items-center mt-1">
-                  <Input
-                    value={apiKeyInput}
-                    onChange={(e) => setApiKeyInput(e.target.value)}
-                    placeholder="Paste your NCBI API key"
-                    className="font-mono text-sm flex-1"
-                    autoFocus
-                  />
+                  <div className="relative flex-1">
+                    <Input
+                      type={showApiKey ? "text" : "password"}
+                      name="ncbi-token"
+                      autoComplete="off"
+                      spellCheck={false}
+                      value={apiKeyInput}
+                      onChange={(e) => setApiKeyInput(e.target.value)}
+                      placeholder="Paste your NCBI API key"
+                      className="font-mono text-sm pr-9"
+                      autoFocus
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowApiKey((v) => !v)}
+                      aria-label={showApiKey ? "Hide API key" : "Show API key"}
+                      className="absolute inset-y-0 right-2 flex items-center text-gray-400 hover:text-gray-600"
+                    >
+                      {showApiKey ? <EyeOff size={14} /> : <Eye size={14} />}
+                    </button>
+                  </div>
                   <Button
                     size="sm"
                     className="bg-[#cf4520] hover:bg-[#a3381a] text-white"
@@ -254,6 +295,7 @@ export default function SetupPage() {
                         });
                         setConfig({ ...config, pubmed_api_key: apiKeyInput });
                         setEditingApiKey(false);
+                        setShowApiKey(false);
                       } finally {
                         setSavingApiKey(false);
                       }
@@ -261,7 +303,7 @@ export default function SetupPage() {
                   >
                     {savingApiKey ? "Saving..." : "Save"}
                   </Button>
-                  <Button variant="outline" size="sm" onClick={() => setEditingApiKey(false)}>
+                  <Button variant="outline" size="sm" onClick={() => { setEditingApiKey(false); setShowApiKey(false); }}>
                     Cancel
                   </Button>
                 </div>
@@ -283,6 +325,113 @@ export default function SetupPage() {
                   </a>
                 </p>
               )}
+            </CardContent>
+          </Card>
+
+          <Card className="border-gray-200 shadow-sm">
+            <CardContent className="p-5">
+              <div className="flex items-center justify-between mb-1">
+                <p className="text-xs text-gray-500 uppercase tracking-wider">Retrieval thresholds</p>
+                {!editingThresholds && (
+                  <button
+                    onClick={() => {
+                      setEditingThresholds(true);
+                      setThresholdsInput({ lenient: lenientThreshold, strict: strictThreshold });
+                      setThresholdError(null);
+                    }}
+                    className="text-xs text-blue-600 hover:underline"
+                  >
+                    Change
+                  </button>
+                )}
+              </div>
+              {editingThresholds ? (
+                <div className="space-y-2 mt-1">
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <Input
+                        type="number"
+                        min={1}
+                        value={thresholdsInput.lenient}
+                        onChange={(e) =>
+                          setThresholdsInput((p) => ({ ...p, lenient: parseInt(e.target.value || "0", 10) }))
+                        }
+                        className="font-mono text-sm"
+                      />
+                      <p className="text-xs text-gray-400 mt-1">Lenient</p>
+                    </div>
+                    <div>
+                      <Input
+                        type="number"
+                        min={1}
+                        value={thresholdsInput.strict}
+                        onChange={(e) =>
+                          setThresholdsInput((p) => ({ ...p, strict: parseInt(e.target.value || "0", 10) }))
+                        }
+                        className="font-mono text-sm"
+                      />
+                      <p className="text-xs text-gray-400 mt-1">Strict</p>
+                    </div>
+                  </div>
+                  {!thresholdsValid && (
+                    <p className="text-xs text-red-600">
+                      Both must be positive integers and strict must be ≤ lenient.
+                    </p>
+                  )}
+                  {thresholdError && <p className="text-xs text-red-600">{thresholdError}</p>}
+                  <div className="flex gap-2">
+                    <Button
+                      size="sm"
+                      className="bg-[#cf4520] hover:bg-[#a3381a] text-white"
+                      disabled={savingThresholds || !thresholdsValid}
+                      onClick={async () => {
+                        setSavingThresholds(true);
+                        setThresholdError(null);
+                        try {
+                          await apiFetch("/api/institution/retrieval-thresholds", {
+                            method: "PUT",
+                            body: JSON.stringify({
+                              lenient_threshold: thresholdsInput.lenient,
+                              strict_threshold: thresholdsInput.strict,
+                            }),
+                          });
+                          setLenientThreshold(thresholdsInput.lenient);
+                          setStrictThreshold(thresholdsInput.strict);
+                          setConfig({
+                            ...config,
+                            lenient_threshold: thresholdsInput.lenient,
+                            strict_threshold: thresholdsInput.strict,
+                          });
+                          setEditingThresholds(false);
+                        } catch (err) {
+                          setThresholdError(err instanceof Error ? err.message : "Save failed");
+                        } finally {
+                          setSavingThresholds(false);
+                        }
+                      }}
+                    >
+                      {savingThresholds ? "Saving..." : "Save"}
+                    </Button>
+                    <Button variant="outline" size="sm" onClick={() => setEditingThresholds(false)}>
+                      Cancel
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex gap-6 text-sm text-gray-700">
+                  <div>
+                    <span className="text-gray-400 text-xs uppercase tracking-wider mr-2">Lenient</span>
+                    <span className="font-mono">{lenientThreshold.toLocaleString()}</span>
+                  </div>
+                  <div>
+                    <span className="text-gray-400 text-xs uppercase tracking-wider mr-2">Strict</span>
+                    <span className="font-mono">{strictThreshold.toLocaleString()}</span>
+                  </div>
+                </div>
+              )}
+              <p className="text-xs text-gray-400 mt-2">
+                Lenient: switch to a stricter query if a researcher&apos;s name search returns more than this many articles. Strict: skip retrieval entirely if the strict query still returns more than this.
+              </p>
             </CardContent>
           </Card>
         </div>
@@ -375,13 +524,27 @@ export default function SetupPage() {
             </div>
             <div>
               <Label htmlFor="apikey">PubMed API key (optional)</Label>
-              <Input
-                id="apikey"
-                placeholder="e.g., a1b2c3d4e5f6..."
-                value={pubmedApiKey}
-                onChange={(e) => setPubmedApiKey(e.target.value)}
-                className="mt-1 font-mono text-sm"
-              />
+              <div className="relative mt-1">
+                <Input
+                  id="apikey"
+                  type={showApiKey ? "text" : "password"}
+                  name="ncbi-token"
+                  autoComplete="off"
+                  spellCheck={false}
+                  placeholder="e.g., a1b2c3d4e5f6..."
+                  value={pubmedApiKey}
+                  onChange={(e) => setPubmedApiKey(e.target.value)}
+                  className="font-mono text-sm pr-9"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowApiKey((v) => !v)}
+                  aria-label={showApiKey ? "Hide API key" : "Show API key"}
+                  className="absolute inset-y-0 right-2 flex items-center text-gray-400 hover:text-gray-600"
+                >
+                  {showApiKey ? <EyeOff size={14} /> : <Eye size={14} />}
+                </button>
+              </div>
               <p className="text-xs text-gray-400 mt-1">
                 Increases PubMed rate limit from 3 to 10 requests/sec.{" "}
                 <a
@@ -393,6 +556,45 @@ export default function SetupPage() {
                   Get a free key from NCBI
                 </a>
               </p>
+            </div>
+            <div>
+              <Label>Retrieval thresholds</Label>
+              <div className="grid grid-cols-2 gap-3 mt-1">
+                <div>
+                  <Input
+                    id="lenient"
+                    type="number"
+                    min={1}
+                    value={lenientThreshold}
+                    onChange={(e) => setLenientThreshold(parseInt(e.target.value || "0", 10))}
+                    className="font-mono text-sm"
+                  />
+                  <p className="text-xs text-gray-400 mt-1">Lenient (default 3000)</p>
+                </div>
+                <div>
+                  <Input
+                    id="strict"
+                    type="number"
+                    min={1}
+                    value={strictThreshold}
+                    onChange={(e) => setStrictThreshold(parseInt(e.target.value || "0", 10))}
+                    className="font-mono text-sm"
+                  />
+                  <p className="text-xs text-gray-400 mt-1">Strict (default 1500)</p>
+                </div>
+              </div>
+              <p className="text-xs text-gray-400 mt-1">
+                If a researcher&apos;s lenient name query returns more than the lenient threshold,
+                the pipeline retries with a stricter query. If the strict query still exceeds the
+                strict threshold, retrieval is skipped for that researcher. Strict must be ≤ lenient.
+              </p>
+              {(!Number.isInteger(lenientThreshold) || lenientThreshold <= 0 ||
+                !Number.isInteger(strictThreshold) || strictThreshold <= 0 ||
+                strictThreshold > lenientThreshold) && (
+                <p className="text-xs text-red-600 mt-1">
+                  Both thresholds must be positive integers and strict must be ≤ lenient.
+                </p>
+              )}
             </div>
             <Button
               onClick={startDiscovery}
@@ -554,13 +756,18 @@ export default function SetupPage() {
           <div className="flex items-center justify-between">
             <Button
               onClick={saveConfig}
-              disabled={saving}
+              disabled={
+                saving ||
+                !Number.isInteger(lenientThreshold) || lenientThreshold <= 0 ||
+                !Number.isInteger(strictThreshold) || strictThreshold <= 0 ||
+                strictThreshold > lenientThreshold
+              }
               className="bg-[#cf4520] hover:bg-[#a3381a] text-white"
             >
               {saving ? "Saving..." : "Save Configuration"}
             </Button>
             <button
-              onClick={resetConfig}
+              onClick={() => setConfirmReset(true)}
               className="text-xs text-gray-400 hover:text-red-600 underline"
             >
               Reset configuration
@@ -568,6 +775,18 @@ export default function SetupPage() {
           </div>
         </div>
       )}
+
+      <ConfirmDialog
+        open={confirmReset}
+        onOpenChange={setConfirmReset}
+        title="Reset institution configuration?"
+        description={<p className="text-xs text-gray-500">You will need to re-run retrieval and scoring after reconfiguring.</p>}
+        preserved={["Researchers", "Curations / accept-reject decisions"]}
+        destroyed={["Institution name, email domains, affiliation keywords", "All scores and retrieval history"]}
+        confirmLabel="Reset configuration"
+        cancelLabel="Keep current setup"
+        onConfirm={resetConfig}
+      />
     </div>
   );
 }

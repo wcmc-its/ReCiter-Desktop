@@ -15,6 +15,11 @@ pubmed:
   rate_limit_with_key: 10
   rate_limit_without_key: 3
 
+# Retrieval strategy (matches ReCiter application.properties)
+retrieval:
+  lenient_threshold: 3000   # If lenient count > this, switch to strict
+  strict_threshold: 1500    # If strict count > this, skip retrieval entirely
+
 # Name scoring weights
 name_scoring:
   first_name:
