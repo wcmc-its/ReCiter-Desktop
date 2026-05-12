@@ -6,7 +6,7 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { PipelineRow, Phase } from "@/components/pipeline-row";
-import { apiExportUrl } from "@/lib/api";
+import { apiDownload } from "@/lib/api";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { PrerequisiteGate } from "@/components/prerequisite-gate";
 import { useWorkflow } from "@/lib/workflow";
@@ -386,9 +386,12 @@ export default function PipelinePage() {
                 </Button>
               </Link>
             )}
-            <a href={apiExportUrl("/api/scores/export")} download>
-              <Button variant="outline">Export All Scores (CSV)</Button>
-            </a>
+            <Button
+              variant="outline"
+              onClick={() => apiDownload("/api/scores/export", "scores.csv")}
+            >
+              Export All Scores (CSV)
+            </Button>
             <Button variant="outline" onClick={resetPipeline}>
               Run again
             </Button>
