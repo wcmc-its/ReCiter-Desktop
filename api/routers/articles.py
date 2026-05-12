@@ -3,7 +3,8 @@ import json
 import logging
 import os
 import uuid
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from datetime import datetime
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.exc import IntegrityError
@@ -11,7 +12,7 @@ from sqlalchemy.orm import Session
 import pandas as pd
 
 from api.database import SessionLocal, get_db
-from api.models import Article, PersonArticle, Curation
+from api.models import Article, ArticleImportRun, PersonArticle, Curation
 from api.services.column_mapper import detect_mappings
 from api.services.upload_utils import (
     UPLOAD_DIR,
@@ -91,6 +92,41 @@ def _store_article(db: Session, art) -> bool:
         return False
 
 
+def _run_dict(run: ArticleImportRun) -> dict:
+    return {
+        "run_id": run.run_id,
+        "status": run.status,
+        "total_pmids": run.total_pmids,
+        "imported_pmids": run.imported_pmids,
+        "person_count": run.person_count,
+        "file_id": run.file_id,
+        "filename": run.filename,
+        "import_gold_standard": bool(run.import_gold_standard),
+        "error_message": run.error_message,
+        "started_at": run.started_at.isoformat() if run.started_at else None,
+        "completed_at": run.completed_at.isoformat() if run.completed_at else None,
+        "created_at": run.created_at.isoformat() if run.created_at else None,
+    }
+
+
+def _update_run_status(run_id: int, **fields) -> None:
+    """Update a run row in its own short-lived session.
+
+    Used from the streaming generator's finally clause so the lifecycle
+    transition survives a closed/aborted main session.
+    """
+    db = SessionLocal()
+    try:
+        run = db.query(ArticleImportRun).filter_by(run_id=run_id).first()
+        if not run:
+            return
+        for k, v in fields.items():
+            setattr(run, k, v)
+        db.commit()
+    finally:
+        db.close()
+
+
 @router.post("/upload")
 async def upload_file(file: UploadFile = File(...)):
     """Stage a file: parse headers, detect column mappings, return a preview.
@@ -139,168 +175,381 @@ async def upload_file(file: UploadFile = File(...)):
     }
 
 
-@router.post("/import")
-def import_articles(req: ImportRequest):
-    """Import staged PMIDs with SSE progress events.
+class _ClientDisconnected(Exception):
+    """Raised when the SSE client has gone away.
 
-    Stream events (newline-delimited `data: {json}\\n\\n`):
-      - {type: "status", message}
-      - {type: "fetch_progress", batch, batches, fetched, total, error?}
-      - {type: "complete", articles_fetched, links_created, curations_imported,
-                            total_pmids, already_existed}
-      - {type: "error", message}
+    Distinct from GeneratorExit so the finally block can route us to
+    PARTIAL (not FAILED) without surfacing as a real error.
     """
-    filepath = upload_path(req.file_id)
-    if not os.path.exists(filepath):
-        raise HTTPException(status_code=404, detail="Upload not found. Please re-upload the file.")
 
-    with open(filepath, "rb") as f:
-        content = f.read()
+
+async def _run_import_stream(
+    file_id: str,
+    rename_map: dict,
+    import_gold_standard: bool,
+    existing_run_id: int | None = None,
+    request: Request | None = None,
+):
+    """Async generator producing SSE events for an article import.
+
+    Polls `request.is_disconnected()` between chunks so a closed browser
+    or a curl --max-time abort flips the run to PARTIAL promptly,
+    instead of running to natural completion (uvicorn does not propagate
+    disconnects into the generator on its own).
+
+    Transitions:
+      RUNNING -> COMPLETED on normal finish (staging file deleted)
+      RUNNING -> FAILED    on uncaught exception (staging file kept)
+      RUNNING -> PARTIAL   on client disconnect or aclose (staging file kept)
+    """
+
+    async def _check_disconnect():
+        if request is not None and await request.is_disconnected():
+            raise _ClientDisconnected()
+
+    filepath = upload_path(file_id)
     name_path = filepath + ".name"
     filename = "pmids.csv"
     if os.path.exists(name_path):
         with open(name_path) as f:
             filename = f.read().strip() or filename
 
-    rename_map = {m.original: m.canonical for m in req.mappings if m.canonical}
-
-    def event_stream():
-        db = SessionLocal()
+    db = SessionLocal()
+    run_id: int | None = existing_run_id
+    finished_cleanly = False
+    failure_message: str | None = None
+    try:
         try:
+            with open(filepath, "rb") as f:
+                content = f.read()
+
+            yield f"data: {json.dumps({'type': 'status', 'message': 'Reading file...'})}\n\n"
+
             try:
-                yield f"data: {json.dumps({'type': 'status', 'message': 'Reading file...'})}\n\n"
+                df = _read_dataframe(content, filename)
+            except Exception as e:
+                failure_message = f"Could not parse file: {e}"
+                yield f"data: {json.dumps({'type': 'error', 'message': failure_message})}\n\n"
+                return
 
+            df = df.rename(columns=rename_map)
+
+            if "person_id" not in df.columns or "pmid" not in df.columns:
+                failure_message = "File must map both person_id and pmid columns."
+                yield f"data: {json.dumps({'type': 'error', 'message': failure_message})}\n\n"
+                return
+
+            from api.routers.institution import get_pubmed_api_key
+            api_key = get_pubmed_api_key(db)
+
+            df = df.dropna(subset=["pmid"])
+            try:
+                all_pmids = [int(p) for p in df["pmid"].astype(int).unique()]
+            except (ValueError, TypeError) as e:
+                failure_message = f"Invalid PMID value: {e}"
+                yield f"data: {json.dumps({'type': 'error', 'message': failure_message})}\n\n"
+                return
+
+            person_count = df["person_id"].dropna().nunique()
+            has_assertions = import_gold_standard and "assertion" in df.columns
+
+            existing_pmids = {str(a.pmid) for a in db.query(Article.pmid).all()}
+            new_pmids = [p for p in all_pmids if str(p) not in existing_pmids]
+            already_existed = len(all_pmids) - len(new_pmids)
+
+            # Create or refresh the run row now that we know the totals.
+            mappings_json = [
+                {"original": k, "canonical": v} for k, v in rename_map.items()
+            ]
+            if run_id is None:
+                run = ArticleImportRun(
+                    status="RUNNING",
+                    total_pmids=len(all_pmids),
+                    imported_pmids=already_existed,
+                    person_count=int(person_count),
+                    file_id=file_id,
+                    filename=filename,
+                    mappings_json=mappings_json,
+                    import_gold_standard=1 if import_gold_standard else 0,
+                    started_at=datetime.utcnow(),
+                )
+                db.add(run)
+                db.commit()
+                db.refresh(run)
+                run_id = run.run_id
+            else:
+                run = db.query(ArticleImportRun).filter_by(run_id=run_id).first()
+                if run:
+                    run.status = "RUNNING"
+                    run.total_pmids = len(all_pmids)
+                    run.imported_pmids = already_existed
+                    run.person_count = int(person_count)
+                    run.error_message = None
+                    run.started_at = datetime.utcnow()
+                    run.completed_at = None
+                    db.commit()
+
+            yield f"data: {json.dumps({'type': 'run_started', 'run_id': run_id, 'total_pmids': len(all_pmids), 'already_imported': already_existed})}\n\n"
+            yield f"data: {json.dumps({'type': 'status', 'message': f'{len(all_pmids)} unique PMIDs ({already_existed} already on file, {len(new_pmids)} to fetch)'})}\n\n"
+
+            # Collect per-batch progress events from the synchronous fetcher.
+            progress_events: list[dict] = []
+
+            def on_batch(event: dict):
+                progress_events.append(event)
+
+            article_count = 0
+            imported_total = already_existed
+            if new_pmids:
+                yield f"data: {json.dumps({'type': 'status', 'message': 'Fetching metadata from PubMed...'})}\n\n"
+                CHUNK = 200
+                chunks = [new_pmids[i:i + CHUNK] for i in range(0, len(new_pmids), CHUNK)]
+                requested_total = 0
+                for chunk_idx, chunk in enumerate(chunks, start=1):
+                    await _check_disconnect()
+                    progress_events.clear()
+                    fetched = fetch_articles(chunk, api_key=api_key or "", on_batch=on_batch)
+                    chunk_new = 0
+                    for art in fetched:
+                        if _store_article(db, art):
+                            article_count += 1
+                            chunk_new += 1
+                    db.commit()
+                    requested_total += len(chunk)
+                    imported_total += chunk_new
+                    # Persist progress so a client abort after this commit
+                    # leaves an accurate imported_pmids count.
+                    _update_run_status(run_id, imported_pmids=imported_total)
+                    for ev in progress_events:
+                        merged = {
+                            "type": "fetch_progress",
+                            "batch": chunk_idx,
+                            "batches": len(chunks),
+                            "fetched": requested_total,
+                            "total": len(new_pmids),
+                        }
+                        if "error" in ev:
+                            merged["error"] = ev["error"]
+                        yield f"data: {json.dumps(merged)}\n\n"
+
+            known_pmids = {str(a.pmid) for a in db.query(Article.pmid).all()}
+
+            yield f"data: {json.dumps({'type': 'status', 'message': 'Linking researchers to articles...'})}\n\n"
+            link_count = 0
+            for _, row in df.iterrows():
+                pid = str(row["person_id"]).strip()
                 try:
-                    df = _read_dataframe(content, filename)
-                except Exception as e:
-                    yield f"data: {json.dumps({'type': 'error', 'message': f'Could not parse file: {e}'})}\n\n"
-                    return
+                    pmid = str(int(row["pmid"])).strip()
+                except (ValueError, TypeError):
+                    continue
+                if pid and pmid and pmid in known_pmids:
+                    existing = db.query(PersonArticle).filter_by(
+                        person_id=pid, pmid=pmid
+                    ).first()
+                    if not existing:
+                        db.add(PersonArticle(person_id=pid, pmid=pmid, source="upload"))
+                        link_count += 1
 
-                df = df.rename(columns=rename_map)
-
-                if "person_id" not in df.columns or "pmid" not in df.columns:
-                    yield f"data: {json.dumps({'type': 'error', 'message': 'File must map both person_id and pmid columns.'})}\n\n"
-                    return
-
-                from api.routers.institution import get_pubmed_api_key
-                api_key = get_pubmed_api_key(db)
-
-                df = df.dropna(subset=["pmid"])
-                try:
-                    all_pmids = [int(p) for p in df["pmid"].astype(int).unique()]
-                except (ValueError, TypeError) as e:
-                    yield f"data: {json.dumps({'type': 'error', 'message': f'Invalid PMID value: {e}'})}\n\n"
-                    return
-
-                has_assertions = req.import_gold_standard and "assertion" in df.columns
-
-                existing_pmids = {str(a.pmid) for a in db.query(Article.pmid).all()}
-                new_pmids = [p for p in all_pmids if str(p) not in existing_pmids]
-                already_existed = len(all_pmids) - len(new_pmids)
-
-                yield f"data: {json.dumps({'type': 'status', 'message': f'{len(all_pmids)} unique PMIDs ({already_existed} already on file, {len(new_pmids)} to fetch)'})}\n\n"
-
-                # Collect per-batch progress events from the synchronous fetcher.
-                progress_events: list[dict] = []
-
-                def on_batch(event: dict):
-                    progress_events.append(event)
-
-                article_count = 0
-                if new_pmids:
-                    yield f"data: {json.dumps({'type': 'status', 'message': 'Fetching metadata from PubMed...'})}\n\n"
-                    # Run fetch in chunks so we can flush progress between batches.
-                    # core.pubmed already batches internally, but the on_batch callback
-                    # is invoked after each one — we collect them inside the closure
-                    # and yield them on the next iteration.
-                    CHUNK = 200
-                    chunks = [new_pmids[i:i + CHUNK] for i in range(0, len(new_pmids), CHUNK)]
-                    # Progress reflects PMIDs *requested* (always reaches
-                    # len(new_pmids)) rather than Articles *parsed* — PubMed
-                    # can silently drop suppressed/retracted PMIDs, so a
-                    # parsed-only counter never hits 100% on a successful run.
-                    requested_total = 0
-                    for chunk_idx, chunk in enumerate(chunks, start=1):
-                        progress_events.clear()
-                        fetched = fetch_articles(chunk, api_key=api_key or "", on_batch=on_batch)
-                        for art in fetched:
-                            if _store_article(db, art):
-                                article_count += 1
-                        db.commit()
-                        requested_total += len(chunk)
-                        # Flush any per-batch events from the fetcher (one per chunk here)
-                        for ev in progress_events:
-                            merged = {
-                                "type": "fetch_progress",
-                                "batch": chunk_idx,
-                                "batches": len(chunks),
-                                "fetched": requested_total,
-                                "total": len(new_pmids),
-                            }
-                            if "error" in ev:
-                                merged["error"] = ev["error"]
-                            yield f"data: {json.dumps(merged)}\n\n"
-
-                known_pmids = {str(a.pmid) for a in db.query(Article.pmid).all()}
-
-                yield f"data: {json.dumps({'type': 'status', 'message': 'Linking researchers to articles...'})}\n\n"
-                link_count = 0
+            curation_count = 0
+            if has_assertions:
+                yield f"data: {json.dumps({'type': 'status', 'message': 'Importing assertions...'})}\n\n"
                 for _, row in df.iterrows():
                     pid = str(row["person_id"]).strip()
                     try:
                         pmid = str(int(row["pmid"])).strip()
                     except (ValueError, TypeError):
                         continue
-                    if pid and pmid and pmid in known_pmids:
-                        existing = db.query(PersonArticle).filter_by(
+                    assertion = str(row.get("assertion", "")).strip().upper()
+                    if pid and pmid and pmid in known_pmids and assertion in ("ACCEPTED", "REJECTED"):
+                        existing = db.query(Curation).filter_by(
                             person_id=pid, pmid=pmid
                         ).first()
                         if not existing:
-                            db.add(PersonArticle(person_id=pid, pmid=pmid, source="upload"))
-                            link_count += 1
+                            db.add(Curation(
+                                person_id=pid, pmid=pmid,
+                                assertion=assertion, source="import",
+                            ))
+                            curation_count += 1
 
-                curation_count = 0
-                if has_assertions:
-                    yield f"data: {json.dumps({'type': 'status', 'message': 'Importing assertions...'})}\n\n"
-                    for _, row in df.iterrows():
-                        pid = str(row["person_id"]).strip()
+            db.commit()
+
+            yield f"data: {json.dumps({'type': 'complete', 'run_id': run_id, 'articles_fetched': article_count, 'links_created': link_count, 'curations_imported': curation_count, 'total_pmids': len(all_pmids), 'already_existed': already_existed})}\n\n"
+            finished_cleanly = True
+        except _ClientDisconnected:
+            # Client disconnected; PARTIAL will be set in the finally block.
+            return
+        except GeneratorExit:
+            # Explicit aclose() (e.g. from tests). Re-raise so FastAPI
+            # completes its response cleanup. finally still runs.
+            raise
+        except Exception as exc:
+            logger.exception("Article import failed")
+            failure_message = f"Import failed: {exc}"
+            try:
+                db.rollback()
+            except Exception:
+                pass
+            try:
+                yield f"data: {json.dumps({'type': 'error', 'message': failure_message})}\n\n"
+            except Exception:
+                pass
+    finally:
+        # Lifecycle transition. Use a fresh session because `db` may be
+        # in an unusable state after an exception or client abort.
+        if run_id is not None:
+            if finished_cleanly:
+                _update_run_status(
+                    run_id,
+                    status="COMPLETED",
+                    completed_at=datetime.utcnow(),
+                    error_message=None,
+                )
+                # On success, delete staging files (no retry needed).
+                for p in (filepath, name_path):
+                    if os.path.exists(p):
                         try:
-                            pmid = str(int(row["pmid"])).strip()
-                        except (ValueError, TypeError):
-                            continue
-                        assertion = str(row.get("assertion", "")).strip().upper()
-                        if pid and pmid and pmid in known_pmids and assertion in ("ACCEPTED", "REJECTED"):
-                            existing = db.query(Curation).filter_by(
-                                person_id=pid, pmid=pmid
-                            ).first()
-                            if not existing:
-                                db.add(Curation(
-                                    person_id=pid, pmid=pmid,
-                                    assertion=assertion, source="import",
-                                ))
-                                curation_count += 1
+                            os.remove(p)
+                        except OSError:
+                            pass
+            elif failure_message is not None:
+                _update_run_status(
+                    run_id,
+                    status="FAILED",
+                    completed_at=datetime.utcnow(),
+                    error_message=failure_message,
+                )
+            else:
+                # No `complete` event, no exception => client disconnect.
+                _update_run_status(
+                    run_id,
+                    status="PARTIAL",
+                    completed_at=datetime.utcnow(),
+                )
+        try:
+            db.close()
+        except Exception:
+            pass
 
-                db.commit()
 
-                yield f"data: {json.dumps({'type': 'complete', 'articles_fetched': article_count, 'links_created': link_count, 'curations_imported': curation_count, 'total_pmids': len(all_pmids), 'already_existed': already_existed})}\n\n"
-            except Exception as exc:
-                logger.exception("Article import failed")
-                try:
-                    db.rollback()
-                except Exception:
-                    pass
-                yield f"data: {json.dumps({'type': 'error', 'message': f'Import failed: {exc}'})}\n\n"
-        finally:
-            # Clean up staging files whether import succeeded or failed
-            for p in (filepath, name_path):
+@router.post("/import")
+def import_articles(req: ImportRequest, request: Request):
+    """Import staged PMIDs with SSE progress events.
+
+    Stream events (newline-delimited `data: {json}\\n\\n`):
+      - {type: "status", message}
+      - {type: "run_started", run_id, total_pmids, already_imported}
+      - {type: "fetch_progress", batch, batches, fetched, total, error?}
+      - {type: "complete", run_id, articles_fetched, links_created,
+                            curations_imported, total_pmids, already_existed}
+      - {type: "error", message}
+    """
+    filepath = upload_path(req.file_id)
+    if not os.path.exists(filepath):
+        raise HTTPException(status_code=404, detail="Upload not found. Please re-upload the file.")
+
+    rename_map = {m.original: m.canonical for m in req.mappings if m.canonical}
+    return StreamingResponse(
+        _run_import_stream(
+            req.file_id, rename_map, req.import_gold_standard, request=request,
+        ),
+        media_type="text/event-stream",
+    )
+
+
+@router.get("/import-runs/latest")
+def latest_import_run(db: Session = Depends(get_db)):
+    """Return the most recent import run, or null if none exist.
+
+    The articles page polls this to surface partial-state banners.
+    """
+    run = (
+        db.query(ArticleImportRun)
+        .order_by(ArticleImportRun.run_id.desc())
+        .first()
+    )
+    if not run:
+        return None
+    body = _run_dict(run)
+    # Tell the client whether retry is actually viable (staging file
+    # may have been swept by sweep_stale_uploads after 24h).
+    body["retry_available"] = (
+        run.status in ("PARTIAL", "FAILED")
+        and run.file_id is not None
+        and os.path.exists(os.path.join(UPLOAD_DIR, run.file_id))
+    )
+    return body
+
+
+@router.post("/import-runs/{run_id}/retry")
+def retry_import_run(run_id: int, request: Request, db: Session = Depends(get_db)):
+    """Resume a PARTIAL or FAILED import.
+
+    Streams the same SSE events as /import. The existing dedup logic
+    naturally only fetches PMIDs that aren't already in `article`, so
+    the retry only does the unfinished work.
+    """
+    run = db.query(ArticleImportRun).filter_by(run_id=run_id).first()
+    if not run:
+        raise HTTPException(status_code=404, detail="Import run not found")
+    if run.status not in ("PARTIAL", "FAILED"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Run {run_id} is {run.status}; only PARTIAL/FAILED runs can be retried",
+        )
+    if not run.file_id:
+        raise HTTPException(status_code=400, detail="Run has no staged file to retry from")
+    try:
+        validate_file_id(run.file_id)
+    except HTTPException:
+        raise HTTPException(status_code=400, detail="Run has an invalid file_id")
+    filepath = os.path.join(UPLOAD_DIR, run.file_id)
+    if not os.path.exists(filepath):
+        raise HTTPException(
+            status_code=410,
+            detail="Staged file is no longer available. Please re-upload to retry.",
+        )
+
+    rename_map = {
+        m["original"]: m["canonical"]
+        for m in (run.mappings_json or [])
+        if m.get("canonical")
+    }
+    import_gold_standard = bool(run.import_gold_standard)
+    return StreamingResponse(
+        _run_import_stream(
+            run.file_id, rename_map, import_gold_standard,
+            existing_run_id=run_id, request=request,
+        ),
+        media_type="text/event-stream",
+    )
+
+
+@router.post("/import-runs/{run_id}/dismiss")
+def dismiss_import_run(run_id: int, db: Session = Depends(get_db)):
+    """Discard a PARTIAL/FAILED run's staging file so it stops nagging.
+
+    Idempotent: succeeds even if the file is already gone.
+    """
+    run = db.query(ArticleImportRun).filter_by(run_id=run_id).first()
+    if not run:
+        raise HTTPException(status_code=404, detail="Import run not found")
+    if run.file_id:
+        try:
+            validate_file_id(run.file_id)
+            for p in (
+                os.path.join(UPLOAD_DIR, run.file_id),
+                os.path.join(UPLOAD_DIR, run.file_id + ".name"),
+            ):
                 if os.path.exists(p):
                     try:
                         os.remove(p)
                     except OSError:
                         pass
-            db.close()
-
-    return StreamingResponse(event_stream(), media_type="text/event-stream")
+        except HTTPException:
+            pass
+    run.file_id = None
+    db.commit()
+    return {"run_id": run_id, "dismissed": True}
 
 
 @router.get("")

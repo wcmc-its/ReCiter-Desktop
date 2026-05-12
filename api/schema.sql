@@ -66,6 +66,22 @@ CREATE TABLE IF NOT EXISTS retrieval_log (
     FOREIGN KEY (person_id) REFERENCES identity(person_id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS article_import_run (
+    run_id INT AUTO_INCREMENT PRIMARY KEY,
+    status ENUM('RUNNING', 'COMPLETED', 'PARTIAL', 'FAILED') NOT NULL DEFAULT 'RUNNING',
+    total_pmids INT NOT NULL DEFAULT 0,
+    imported_pmids INT NOT NULL DEFAULT 0,
+    person_count INT NOT NULL DEFAULT 0,
+    file_id VARCHAR(64),
+    filename VARCHAR(512),
+    mappings_json JSON,
+    import_gold_standard TINYINT NOT NULL DEFAULT 1,
+    error_message TEXT,
+    started_at TIMESTAMP NULL,
+    completed_at TIMESTAMP NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS curation (
     person_id VARCHAR(128),
     pmid VARCHAR(20),

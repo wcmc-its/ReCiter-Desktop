@@ -71,17 +71,51 @@ async def save_upload_streaming(file: UploadFile, filepath: str) -> bytes:
     return b"".join(chunks)
 
 
+def _retained_file_ids() -> set[str]:
+    """Return file_ids referenced by import runs that may still be retried.
+
+    Staging files for PARTIAL/FAILED ArticleImportRun rows are needed for
+    the retry endpoint, so they must survive the time-based sweep.
+    Imported lazily to avoid a circular import on module load.
+    """
+    try:
+        from api.database import SessionLocal
+        from api.models import ArticleImportRun
+    except Exception:
+        return set()
+    db = SessionLocal()
+    try:
+        rows = (
+            db.query(ArticleImportRun.file_id)
+            .filter(ArticleImportRun.status.in_(("PARTIAL", "FAILED")))
+            .filter(ArticleImportRun.file_id.isnot(None))
+            .all()
+        )
+        return {r[0] for r in rows if r[0]}
+    except Exception:
+        return set()
+    finally:
+        db.close()
+
+
 def sweep_stale_uploads(max_age_seconds: int = STALE_UPLOAD_SECONDS) -> int:
     """Delete files in UPLOAD_DIR older than `max_age_seconds`.
 
     Returns the number of files removed. Intended to be called on app
-    startup to bound disk growth from abandoned uploads.
+    startup to bound disk growth from abandoned uploads. Skips files
+    that back a retryable PARTIAL/FAILED article import run.
     """
     if not os.path.isdir(UPLOAD_DIR):
         return 0
     cutoff = time.time() - max_age_seconds
+    retained = _retained_file_ids()
     removed = 0
     for name in os.listdir(UPLOAD_DIR):
+        # Strip the .name suffix used to remember the original filename;
+        # both files are pinned by the same run row.
+        base = name[:-5] if name.endswith(".name") else name
+        if base in retained:
+            continue
         path = os.path.join(UPLOAD_DIR, name)
         try:
             if os.path.isfile(path) and os.path.getmtime(path) < cutoff:
