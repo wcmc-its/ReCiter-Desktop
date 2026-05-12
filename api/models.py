@@ -92,6 +92,27 @@ class PersonArticleScore(Base):
     run_id = Column(Integer, ForeignKey("pipeline_run.run_id", ondelete="SET NULL"), nullable=True)
 
 
+class ArticleImportRun(Base):
+    __tablename__ = "article_import_run"
+    run_id = Column(Integer, autoincrement=True, primary_key=True)
+    status = Column(
+        Enum("RUNNING", "COMPLETED", "PARTIAL", "FAILED"),
+        nullable=False,
+        server_default="RUNNING",
+    )
+    total_pmids = Column(Integer, nullable=False, server_default="0")
+    imported_pmids = Column(Integer, nullable=False, server_default="0")
+    person_count = Column(Integer, nullable=False, server_default="0")
+    file_id = Column(String(64), nullable=True)
+    filename = Column(String(512), nullable=True)
+    mappings_json = Column(JSON, nullable=True)
+    import_gold_standard = Column(Integer, nullable=False, server_default="1")
+    error_message = Column(Text, nullable=True)
+    started_at = Column(TIMESTAMP, nullable=True)
+    completed_at = Column(TIMESTAMP, nullable=True)
+    created_at = Column(TIMESTAMP, server_default=func.now())
+
+
 class Curation(Base):
     __tablename__ = "curation"
     person_id = Column(String(128), ForeignKey("identity.person_id", ondelete="CASCADE"), primary_key=True)

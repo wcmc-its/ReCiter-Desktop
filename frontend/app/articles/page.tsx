@@ -47,6 +47,17 @@ interface ImportResult {
   already_existed: number;
 }
 
+interface LatestImportRun {
+  run_id: number;
+  status: "RUNNING" | "COMPLETED" | "PARTIAL" | "FAILED";
+  total_pmids: number;
+  imported_pmids: number;
+  person_count: number;
+  filename: string | null;
+  error_message: string | null;
+  retry_available: boolean;
+}
+
 export default function ArticlesPage() {
   const { researcherCount, articleCount, uploadedArticles, refresh } = useWorkflow();
   const router = useRouter();
@@ -74,7 +85,19 @@ export default function ArticlesPage() {
   const [importResult, setImportResult] = useState<ImportResult | null>(null);
   const importAbortRef = useRef<(() => void) | null>(null);
 
+  const [latestRun, setLatestRun] = useState<LatestImportRun | null>(null);
+  const [dismissing, setDismissing] = useState(false);
+
+  const refreshLatestRun = () =>
+    apiFetch<LatestImportRun | null>("/api/articles/import-runs/latest")
+      .then(setLatestRun)
+      .catch(() => setLatestRun(null));
+
   useEffect(() => () => importAbortRef.current?.(), []);
+
+  useEffect(() => {
+    refreshLatestRun();
+  }, []);
 
   useEffect(() => {
     if (articleCount > 0 && !replacing && !importResult) {
@@ -104,8 +127,7 @@ export default function ArticlesPage() {
     }
   }
 
-  function handleImport() {
-    if (!uploadResult) return;
+  function streamImport(path: string, body: Record<string, unknown>) {
     setImporting(true);
     setStatusMessages([]);
     setBatchErrors([]);
@@ -113,14 +135,8 @@ export default function ArticlesPage() {
     setImportError(null);
 
     importAbortRef.current = subscribeSSE(
-      "/api/articles/import",
-      {
-        file_id: uploadResult.file_id,
-        mappings: mappings
-          .filter((m) => m.selected && m.canonical)
-          .map((m) => ({ original: m.original, canonical: m.canonical })),
-        import_gold_standard: importGoldStandard,
-      },
+      path,
+      body,
       (event) => {
         if (event.type === "status") {
           setStatusMessages((prev) => [...prev, event.message as string]);
@@ -152,9 +168,93 @@ export default function ArticlesPage() {
       () => {
         setImporting(false);
         importAbortRef.current = null;
+        refreshLatestRun();
       }
     );
   }
+
+  function handleImport() {
+    if (!uploadResult) return;
+    streamImport("/api/articles/import", {
+      file_id: uploadResult.file_id,
+      mappings: mappings
+        .filter((m) => m.selected && m.canonical)
+        .map((m) => ({ original: m.original, canonical: m.canonical })),
+      import_gold_standard: importGoldStandard,
+    });
+  }
+
+  function handleResume() {
+    if (!latestRun || !latestRun.retry_available) return;
+    setReplacing(true);
+    streamImport(`/api/articles/import-runs/${latestRun.run_id}/retry`, {});
+  }
+
+  async function handleDismiss() {
+    if (!latestRun) return;
+    setDismissing(true);
+    try {
+      await apiFetch(`/api/articles/import-runs/${latestRun.run_id}/dismiss`, {
+        method: "POST",
+      });
+      setLatestRun(null);
+    } finally {
+      setDismissing(false);
+    }
+  }
+
+  const showPartialBanner =
+    latestRun &&
+    (latestRun.status === "PARTIAL" || latestRun.status === "FAILED") &&
+    !importing &&
+    !importResult;
+
+  const partialBanner = showPartialBanner ? (
+    <Card className="border-amber-300 bg-amber-50 shadow-sm mb-6">
+      <CardContent className="p-4 flex items-start gap-4">
+        <div className="flex-1">
+          <p className="text-sm font-medium text-amber-800">
+            {latestRun.status === "PARTIAL"
+              ? "Last import was interrupted"
+              : "Last import failed"}
+          </p>
+          <p className="text-xs text-amber-700 mt-0.5">
+            {latestRun.imported_pmids.toLocaleString()} of{" "}
+            {latestRun.total_pmids.toLocaleString()} PMIDs imported
+            {latestRun.filename ? (
+              <>
+                {" "}from{" "}
+                <span className="font-mono">{latestRun.filename}</span>
+              </>
+            ) : null}
+            .
+            {latestRun.error_message ? (
+              <span className="block mt-1 break-words">{latestRun.error_message}</span>
+            ) : null}
+          </p>
+        </div>
+        <div className="flex gap-2 flex-shrink-0">
+          {latestRun.retry_available && (
+            <Button
+              size="sm"
+              className="bg-amber-600 hover:bg-amber-700 text-white"
+              onClick={handleResume}
+            >
+              Resume import
+            </Button>
+          )}
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={dismissing}
+            onClick={handleDismiss}
+          >
+            Dismiss
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
+  ) : null;
 
   // Success state
   if (importResult) {
@@ -205,6 +305,8 @@ export default function ArticlesPage() {
           </Button>
         </div>
 
+        {partialBanner}
+
         {summaries === null ? (
           <p className="text-sm text-gray-400">Loading...</p>
         ) : (
@@ -238,6 +340,67 @@ export default function ArticlesPage() {
   const fetchPct = progress && progress.total > 0
     ? Math.min(100, Math.round((progress.fetched / progress.total) * 100))
     : 0;
+
+  const progressCard = (importing || statusMessages.length > 0) ? (
+    <Card className="border-gray-200 shadow-sm">
+      <CardContent className="p-5 space-y-3">
+        <div className="space-y-2">
+          {statusMessages.map((msg, i) => {
+            const isActive = i === statusMessages.length - 1 && importing && !importResult;
+            return (
+              <div key={i} className="flex items-center gap-2 text-sm">
+                {isActive ? (
+                  <span className="inline-block w-3 h-3 border-2 border-[#cf4520] border-t-transparent rounded-full animate-spin flex-shrink-0" />
+                ) : (
+                  <span className="text-green-600 flex-shrink-0">&#10003;</span>
+                )}
+                <span className="text-gray-700">{msg}</span>
+              </div>
+            );
+          })}
+        </div>
+
+        {progress && progress.total > 0 && (
+          <div className="space-y-1.5 pt-1">
+            <div className="flex justify-between text-xs text-gray-500">
+              <span>
+                Batch {progress.batch} of {progress.batches}
+              </span>
+              <span className="tabular-nums">
+                {progress.fetched.toLocaleString()} / {progress.total.toLocaleString()} PMIDs
+              </span>
+            </div>
+            <div className="w-full h-1.5 rounded bg-gray-200 overflow-hidden">
+              <div
+                className="h-full bg-[#cf4520] transition-all duration-300"
+                style={{ width: `${fetchPct}%` }}
+              />
+            </div>
+          </div>
+        )}
+
+        {batchErrors.length > 0 && (
+          <div className="border border-amber-300 bg-amber-50 rounded p-3">
+            <p className="text-xs font-medium text-amber-700 mb-1">
+              {batchErrors.length} batch{batchErrors.length === 1 ? "" : "es"} had errors (continuing)
+            </p>
+            <ul className="text-xs text-amber-700 list-disc pl-4 space-y-0.5 max-h-24 overflow-y-auto">
+              {batchErrors.map((e, i) => (
+                <li key={i} className="break-words">{e}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {importError && (
+          <div className="border border-red-300 bg-red-50 rounded p-3">
+            <p className="text-sm font-medium text-red-700 mb-1">Import failed</p>
+            <p className="text-xs text-red-600 break-words">{importError}</p>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  ) : null;
 
   return (
     <PrerequisiteGate
@@ -276,7 +439,11 @@ export default function ArticlesPage() {
         </p>
       )}
 
-      {!uploadResult ? (
+      {partialBanner}
+
+      {importing && !uploadResult ? (
+        progressCard
+      ) : !uploadResult ? (
         parsing ? (
           <Card className="border-gray-200 shadow-sm">
             <CardContent className="p-8 flex items-center gap-3 justify-center">
@@ -389,67 +556,7 @@ export default function ArticlesPage() {
             </div>
           )}
 
-          {/* Live status log during import */}
-          {(importing || statusMessages.length > 0) && (
-            <Card className="border-gray-200 shadow-sm">
-              <CardContent className="p-5 space-y-3">
-                <div className="space-y-2">
-                  {statusMessages.map((msg, i) => {
-                    const isActive = i === statusMessages.length - 1 && importing && !importResult;
-                    return (
-                      <div key={i} className="flex items-center gap-2 text-sm">
-                        {isActive ? (
-                          <span className="inline-block w-3 h-3 border-2 border-[#cf4520] border-t-transparent rounded-full animate-spin flex-shrink-0" />
-                        ) : (
-                          <span className="text-green-600 flex-shrink-0">&#10003;</span>
-                        )}
-                        <span className="text-gray-700">{msg}</span>
-                      </div>
-                    );
-                  })}
-                </div>
-
-                {progress && progress.total > 0 && (
-                  <div className="space-y-1.5 pt-1">
-                    <div className="flex justify-between text-xs text-gray-500">
-                      <span>
-                        Batch {progress.batch} of {progress.batches}
-                      </span>
-                      <span className="tabular-nums">
-                        {progress.fetched.toLocaleString()} / {progress.total.toLocaleString()} PMIDs
-                      </span>
-                    </div>
-                    <div className="w-full h-1.5 rounded bg-gray-200 overflow-hidden">
-                      <div
-                        className="h-full bg-[#cf4520] transition-all duration-300"
-                        style={{ width: `${fetchPct}%` }}
-                      />
-                    </div>
-                  </div>
-                )}
-
-                {batchErrors.length > 0 && (
-                  <div className="border border-amber-300 bg-amber-50 rounded p-3">
-                    <p className="text-xs font-medium text-amber-700 mb-1">
-                      {batchErrors.length} batch{batchErrors.length === 1 ? "" : "es"} had errors (continuing)
-                    </p>
-                    <ul className="text-xs text-amber-700 list-disc pl-4 space-y-0.5 max-h-24 overflow-y-auto">
-                      {batchErrors.map((e, i) => (
-                        <li key={i} className="break-words">{e}</li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-
-                {importError && (
-                  <div className="border border-red-300 bg-red-50 rounded p-3">
-                    <p className="text-sm font-medium text-red-700 mb-1">Import failed</p>
-                    <p className="text-xs text-red-600 break-words">{importError}</p>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          )}
+          {progressCard}
 
           {!importing && !importResult && (
             <div className="flex justify-end gap-3">
