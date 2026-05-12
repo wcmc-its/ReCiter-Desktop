@@ -392,8 +392,8 @@ def search_by_name(
     last_name: str,
     affiliation: str = "",
     api_key: str = "",
-    lenient_threshold: int = 2000,
-    strict_threshold: int = 1000,
+    lenient_threshold: int = 3000,
+    strict_threshold: int = 1500,
     mindate: str = "",
 ) -> dict:
     """Search PubMed using ReCiter's exact cascading retrieval strategy.
@@ -401,11 +401,11 @@ def search_by_name(
     Decision tree (matches AbstractRetrievalStrategy.retrievePubMedArticles):
     1. Build lenient query: LastName FirstInitial[au]
     2. esearch count for lenient query
-    3. If count <= lenient_threshold (2000): fetch all lenient results
+    3. If count <= lenient_threshold (3000): fetch all lenient results
     4. If count > lenient_threshold:
        a. Build strict query: LastName FullFirstName[au]
        b. esearch count for strict query
-       c. If strict count <= strict_threshold (1000): fetch strict results
+       c. If strict count <= strict_threshold (1500): fetch strict results
        d. If strict count > strict_threshold: skip (too ambiguous)
 
     Returns a dict with retrieval metadata:

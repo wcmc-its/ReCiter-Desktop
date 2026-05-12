@@ -1,0 +1,6 @@
+# Last reviewed SHAs from upstream repos.
+# Format: <repo-name> <SHA>
+# Update when syncing parity-relevant changes from upstream into this repo.
+# See PARITY.md for the file allowlist and review process.
+
+ReCiter f90aee5e91af9f8eb26ab0e2874e5fcb39644eed
