@@ -8,7 +8,7 @@ from alembic.config import Config
 from alembic import command
 
 from api.auth import TokenAuthMiddleware, TOKEN_HEADER, load_or_create_token
-from api.routers import institution, researchers, articles, pipeline, scores, stats
+from api.routers import admin, institution, researchers, articles, pipeline, scores, stats
 from api.services.upload_utils import sweep_stale_uploads
 
 logger = logging.getLogger(__name__)
@@ -77,6 +77,7 @@ app.include_router(articles.router)
 app.include_router(pipeline.router)
 app.include_router(scores.router)
 app.include_router(stats.router)
+app.include_router(admin.router)
 
 
 @app.get("/api/health")
