@@ -4,7 +4,7 @@ import logging
 import os
 import uuid
 from datetime import datetime
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.exc import IntegrityError
@@ -175,20 +175,38 @@ async def upload_file(file: UploadFile = File(...)):
     }
 
 
-def _run_import_stream(
+class _ClientDisconnected(Exception):
+    """Raised when the SSE client has gone away.
+
+    Distinct from GeneratorExit so the finally block can route us to
+    PARTIAL (not FAILED) without surfacing as a real error.
+    """
+
+
+async def _run_import_stream(
     file_id: str,
     rename_map: dict,
     import_gold_standard: bool,
     existing_run_id: int | None = None,
+    request: Request | None = None,
 ):
-    """Generator producing SSE events for an article import.
+    """Async generator producing SSE events for an article import.
 
-    On entry, either reuses an existing RUNNING run row (retry) or creates
-    a new one. Transitions:
+    Polls `request.is_disconnected()` between chunks so a closed browser
+    or a curl --max-time abort flips the run to PARTIAL promptly,
+    instead of running to natural completion (uvicorn does not propagate
+    disconnects into the generator on its own).
+
+    Transitions:
       RUNNING -> COMPLETED on normal finish (staging file deleted)
       RUNNING -> FAILED    on uncaught exception (staging file kept)
-      RUNNING -> PARTIAL   on client disconnect (staging file kept)
+      RUNNING -> PARTIAL   on client disconnect or aclose (staging file kept)
     """
+
+    async def _check_disconnect():
+        if request is not None and await request.is_disconnected():
+            raise _ClientDisconnected()
+
     filepath = upload_path(file_id)
     name_path = filepath + ".name"
     filename = "pmids.csv"
@@ -288,6 +306,7 @@ def _run_import_stream(
                 chunks = [new_pmids[i:i + CHUNK] for i in range(0, len(new_pmids), CHUNK)]
                 requested_total = 0
                 for chunk_idx, chunk in enumerate(chunks, start=1):
+                    await _check_disconnect()
                     progress_events.clear()
                     fetched = fetch_articles(chunk, api_key=api_key or "", on_batch=on_batch)
                     chunk_new = 0
@@ -356,9 +375,12 @@ def _run_import_stream(
 
             yield f"data: {json.dumps({'type': 'complete', 'run_id': run_id, 'articles_fetched': article_count, 'links_created': link_count, 'curations_imported': curation_count, 'total_pmids': len(all_pmids), 'already_existed': already_existed})}\n\n"
             finished_cleanly = True
+        except _ClientDisconnected:
+            # Client disconnected; PARTIAL will be set in the finally block.
+            return
         except GeneratorExit:
-            # Client disconnected mid-stream. Mark PARTIAL and re-raise so
-            # FastAPI completes the response cleanup.
+            # Explicit aclose() (e.g. from tests). Re-raise so FastAPI
+            # completes its response cleanup. finally still runs.
             raise
         except Exception as exc:
             logger.exception("Article import failed")
@@ -410,7 +432,7 @@ def _run_import_stream(
 
 
 @router.post("/import")
-def import_articles(req: ImportRequest):
+def import_articles(req: ImportRequest, request: Request):
     """Import staged PMIDs with SSE progress events.
 
     Stream events (newline-delimited `data: {json}\\n\\n`):
@@ -427,7 +449,9 @@ def import_articles(req: ImportRequest):
 
     rename_map = {m.original: m.canonical for m in req.mappings if m.canonical}
     return StreamingResponse(
-        _run_import_stream(req.file_id, rename_map, req.import_gold_standard),
+        _run_import_stream(
+            req.file_id, rename_map, req.import_gold_standard, request=request,
+        ),
         media_type="text/event-stream",
     )
 
@@ -457,7 +481,7 @@ def latest_import_run(db: Session = Depends(get_db)):
 
 
 @router.post("/import-runs/{run_id}/retry")
-def retry_import_run(run_id: int, db: Session = Depends(get_db)):
+def retry_import_run(run_id: int, request: Request, db: Session = Depends(get_db)):
     """Resume a PARTIAL or FAILED import.
 
     Streams the same SSE events as /import. The existing dedup logic
@@ -493,7 +517,8 @@ def retry_import_run(run_id: int, db: Session = Depends(get_db)):
     import_gold_standard = bool(run.import_gold_standard)
     return StreamingResponse(
         _run_import_stream(
-            run.file_id, rename_map, import_gold_standard, existing_run_id=run_id,
+            run.file_id, rename_map, import_gold_standard,
+            existing_run_id=run_id, request=request,
         ),
         media_type="text/event-stream",
     )

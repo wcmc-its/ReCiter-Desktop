@@ -156,7 +156,15 @@ def _write_staged_file(monkeypatch, tmp_path, file_id, csv_text):
     (tmp_path / (file_id + ".name")).write_text("pmids.csv")
 
 
-def test_stream_completes_and_deletes_staging(monkeypatch, tmp_path):
+async def _collect(agen):
+    events = []
+    async for ev in agen:
+        events.append(ev)
+    return events
+
+
+@pytest.mark.asyncio
+async def test_stream_completes_and_deletes_staging(monkeypatch, tmp_path):
     """Happy path: RUNNING -> COMPLETED, staging files removed."""
     from api.routers import articles as art_mod
 
@@ -174,20 +182,19 @@ def test_stream_completes_and_deletes_staging(monkeypatch, tmp_path):
     # No new PMIDs to fetch => fetch_articles is never called.
     monkeypatch.setattr(art_mod, "fetch_articles", lambda *a, **kw: [])
 
-    events = list(art_mod._run_import_stream(file_id, {}, True))
+    events = await _collect(art_mod._run_import_stream(file_id, {}, True))
 
     types = [e for e in events if '"type":' in e]
     assert any('"type": "complete"' in e for e in types)
-    # Run row was created and then flipped COMPLETED
     assert session.runs, "expected an ArticleImportRun row"
-    # _update_run_status runs in a fresh session, so the in-memory run's
-    # status mirrors the create-time value. Confirm staging files removed
-    # which is the externally observable COMPLETED side effect.
+    # _update_run_status runs in a fresh session, so confirm the externally
+    # observable COMPLETED side effect: staging files removed.
     assert not (tmp_path / file_id).exists()
     assert not (tmp_path / (file_id + ".name")).exists()
 
 
-def test_stream_failed_keeps_staging(monkeypatch, tmp_path):
+@pytest.mark.asyncio
+async def test_stream_failed_keeps_staging(monkeypatch, tmp_path):
     """Bad mapping => FAILED, staging files retained for retry."""
     from api.routers import articles as art_mod
 
@@ -203,14 +210,14 @@ def test_stream_failed_keeps_staging(monkeypatch, tmp_path):
         "api.routers.institution.get_pubmed_api_key", lambda _db: ""
     )
 
-    events = list(art_mod._run_import_stream(file_id, {}, True))
+    events = await _collect(art_mod._run_import_stream(file_id, {}, True))
 
     assert any('"type": "error"' in e for e in events)
-    # Staging file retained so user can fix mapping and retry
     assert (tmp_path / file_id).exists()
 
 
-def test_stream_partial_on_generator_exit(monkeypatch, tmp_path):
+@pytest.mark.asyncio
+async def test_stream_partial_on_generator_exit(monkeypatch, tmp_path):
     """Client abort (GeneratorExit) => PARTIAL, staging files retained."""
     from api.routers import articles as art_mod
 
@@ -227,7 +234,6 @@ def test_stream_partial_on_generator_exit(monkeypatch, tmp_path):
     )
     monkeypatch.setattr(art_mod, "fetch_articles", lambda *a, **kw: [])
 
-    # Track FAILED/PARTIAL status writes via the helper.
     status_writes: list[dict] = []
     real_update = art_mod._update_run_status
 
@@ -237,20 +243,16 @@ def test_stream_partial_on_generator_exit(monkeypatch, tmp_path):
 
     monkeypatch.setattr(art_mod, "_update_run_status", _spy)
 
-    gen = art_mod._run_import_stream(file_id, {}, True)
-    # Consume events until run_started is emitted, then close the
-    # generator (simulates client abort after the run row exists).
+    agen = art_mod._run_import_stream(file_id, {}, True)
     saw_run_started = False
-    for ev in gen:
+    async for ev in agen:
         if '"type": "run_started"' in ev:
             saw_run_started = True
             break
     assert saw_run_started, "run_started event must precede client abort"
-    gen.close()
+    await agen.aclose()
 
-    # Staging files must survive a client abort
     assert (tmp_path / file_id).exists()
-    # The last status write should be PARTIAL (not FAILED, not COMPLETED)
     final_statuses = [w.get("status") for w in status_writes if "status" in w]
     assert final_statuses, "expected at least one status transition"
     assert final_statuses[-1] == "PARTIAL"
@@ -272,7 +274,7 @@ def test_retry_rejects_completed_run(monkeypatch):
     db.query.return_value.filter_by.return_value.first.return_value = run
 
     with pytest.raises(HTTPException) as exc:
-        art_mod.retry_import_run(run_id=1, db=db)
+        art_mod.retry_import_run(run_id=1, request=MagicMock(), db=db)
     assert exc.value.status_code == 400
 
 
@@ -284,7 +286,7 @@ def test_retry_404_when_missing(monkeypatch):
     db.query.return_value.filter_by.return_value.first.return_value = None
 
     with pytest.raises(HTTPException) as exc:
-        art_mod.retry_import_run(run_id=999, db=db)
+        art_mod.retry_import_run(run_id=999, request=MagicMock(), db=db)
     assert exc.value.status_code == 404
 
 
@@ -303,8 +305,34 @@ def test_retry_410_when_staging_gone(monkeypatch, tmp_path):
     db.query.return_value.filter_by.return_value.first.return_value = run
 
     with pytest.raises(HTTPException) as exc:
-        art_mod.retry_import_run(run_id=2, db=db)
+        art_mod.retry_import_run(run_id=2, request=MagicMock(), db=db)
     assert exc.value.status_code == 410
+
+
+def test_orphan_recovery_flips_running_to_failed(monkeypatch):
+    """Orphan RUNNING rows (server killed mid-import) are flipped to FAILED."""
+    from api.services import import_run_recovery
+
+    running = [
+        ArticleImportRun(run_id=10, status="RUNNING", file_id="articles_111111111111"),
+        ArticleImportRun(run_id=11, status="RUNNING", file_id="articles_222222222222"),
+    ]
+    fake_session = MagicMock()
+    fake_session.query.return_value.filter_by.return_value.all.return_value = running
+    monkeypatch.setattr(import_run_recovery, "SessionLocal", lambda: fake_session, raising=False)
+    # SessionLocal lookup happens via local import inside the function;
+    # patch the module's namespace too.
+    import api.database
+    monkeypatch.setattr(api.database, "SessionLocal", lambda: fake_session)
+
+    n = import_run_recovery.mark_orphan_imports_failed()
+
+    assert n == 2
+    for row in running:
+        assert row.status == "FAILED"
+        assert row.completed_at is not None
+        assert "Resume" in (row.error_message or "")
+    fake_session.commit.assert_called_once()
 
 
 def test_dismiss_clears_file_id(monkeypatch, tmp_path):

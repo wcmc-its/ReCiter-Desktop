@@ -10,6 +10,7 @@ from alembic import command
 from api.auth import TokenAuthMiddleware, TOKEN_HEADER, load_or_create_token
 from api.routers import institution, researchers, articles, pipeline, scores, stats
 from api.services.upload_utils import sweep_stale_uploads
+from api.services.import_run_recovery import mark_orphan_imports_failed
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +46,14 @@ async def lifespan(app):
         ),
     )
     command.upgrade(cfg, "head")
+
+    # Any article_import_run rows still marked RUNNING belong to a
+    # generator that died with the previous process (server kill, crash,
+    # OOM). Flip them to FAILED so the UI doesn't show a forever-spinner
+    # and the user can choose to retry or dismiss.
+    orphaned = mark_orphan_imports_failed()
+    if orphaned:
+        logger.info(f"Marked {orphaned} orphan RUNNING import run(s) as FAILED on startup")
 
     # Garbage-collect abandoned upload staging files left over from
     # previous sessions (uploads with no follow-up import).
