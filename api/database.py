@@ -7,7 +7,7 @@ DATABASE_URL = os.environ.get(
     "mysql+pymysql://reciter:reciter_local@localhost:3306/reciter_desktop",
 )
 
-engine = create_engine(DATABASE_URL, pool_pre_ping=True)
+engine = create_engine(DATABASE_URL, pool_pre_ping=True, pool_size=10, max_overflow=20)
 SessionLocal = sessionmaker(bind=engine)
 
 

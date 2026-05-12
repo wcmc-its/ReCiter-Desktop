@@ -46,8 +46,27 @@ api/*.pyc
 
 # Brainstorming artifacts
 .superpowers/
+docs/superpowers/
 
 # Claude Code local artifacts
 CLAUDE.md
 CLAUDE.local.md
 .claude/
+.claudeignore
+
+# Local dev artifacts (screenshots, mockups, snapshots, MCP caches, uploads)
+*.png
+/*.html
+/*_files/
+/.playwright-mcp/
+/api/_uploads/
+/analysis/
+/pipeline-full.md
+/researchers-full.md
+/results-snapshot.md
+/sadams-snapshot.md
+/stats-full-snapshot.md
+/REVIEW.md
+/ANALYZE_DUKE.md
+/analyze_duke_faculty.py
+/.planning/setup-flow.html
