@@ -16,9 +16,11 @@ interface ColumnMapperProps {
   onToggle: (index: number) => void;
   onSelectAll: () => void;
   onDeselectAll: () => void;
+  disabled?: boolean;
+  availableFields?: string[];
 }
 
-const AVAILABLE_FIELDS = [
+const DEFAULT_AVAILABLE_FIELDS = [
   "person_id", "first_name", "last_name", "middle_name",
   "primary_email", "primary_institution", "department", "title",
   "orcid", "bachelor_year", "doctoral_year", "pmid", "assertion",
@@ -30,19 +32,21 @@ export function ColumnMapper({
   onToggle,
   onSelectAll,
   onDeselectAll,
+  disabled = false,
+  availableFields = DEFAULT_AVAILABLE_FIELDS,
 }: ColumnMapperProps) {
   return (
-    <div>
+    <div className={disabled ? "opacity-60 pointer-events-none" : undefined} aria-disabled={disabled}>
       <div className="flex items-center justify-between mb-4">
         <p className="text-sm text-gray-600">
           We detected <strong className="text-gray-900">{mappings.length} columns</strong> in
           your file. Please confirm the mappings below.
         </p>
         <div className="flex gap-2">
-          <Button variant="outline" size="sm" onClick={onSelectAll}>
+          <Button variant="outline" size="sm" onClick={onSelectAll} disabled={disabled}>
             Select All
           </Button>
-          <Button variant="outline" size="sm" onClick={onDeselectAll}>
+          <Button variant="outline" size="sm" onClick={onDeselectAll} disabled={disabled}>
             Deselect All
           </Button>
         </div>
@@ -72,7 +76,7 @@ export function ColumnMapper({
                 checked={m.selected && !!m.canonical}
                 onChange={() => onToggle(i)}
                 className="rounded border-gray-300"
-                disabled={!m.canonical}
+                disabled={disabled || !m.canonical}
               />
             </div>
             <code className="text-sm text-gray-700 bg-gray-100 px-2 py-0.5 rounded">
@@ -83,14 +87,15 @@ export function ColumnMapper({
               <span className="text-sm text-green-700">{m.canonical}</span>
             ) : (
               <select
-                className="bg-white text-amber-700 border border-amber-300 rounded px-2 py-1 text-sm"
+                className="bg-white text-amber-700 border border-amber-300 rounded px-2 py-1 text-sm disabled:opacity-50"
                 value=""
+                disabled={disabled}
                 onChange={(e) =>
                   onMappingChange(i, e.target.value || null)
                 }
               >
                 <option value="">-- Select mapping --</option>
-                {AVAILABLE_FIELDS.map((f) => (
+                {availableFields.map((f) => (
                   <option key={f} value={f}>
                     {f}
                   </option>

@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { FileUpload } from "@/components/file-upload";
 import { ColumnMapper } from "@/components/column-mapper";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { apiUpload, apiFetch } from "@/lib/api";
 import { PrerequisiteGate } from "@/components/prerequisite-gate";
 import { useWorkflow } from "@/lib/workflow";
@@ -58,6 +59,10 @@ export default function ResearchersPage() {
     identity_count: number;
     curation_count: number;
   } | null>(null);
+  const [parsing, setParsing] = useState(false);
+  const [parsingFilename, setParsingFilename] = useState<string | null>(null);
+  const [parseError, setParseError] = useState<string | null>(null);
+  const [confirmReplace, setConfirmReplace] = useState(false);
 
   useEffect(() => {
     if (researcherCount > 0 && !replacing && !importResult) {
@@ -65,15 +70,29 @@ export default function ResearchersPage() {
     }
   }, [researcherCount, replacing, importResult]);
 
+  useEffect(() => {
+    if (importResult) refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [importResult]);
+
   async function handleFile(file: File) {
-    const result = await apiUpload<UploadResult>("/api/researchers/upload", file);
-    setUploadResult(result);
-    setMappings(
-      result.mappings.map((m) => ({
-        ...m,
-        selected: !!m.canonical,
-      }))
-    );
+    setParsing(true);
+    setParsingFilename(file.name);
+    setParseError(null);
+    try {
+      const result = await apiUpload<UploadResult>("/api/researchers/upload", file);
+      setUploadResult(result);
+      setMappings(
+        result.mappings.map((m) => ({
+          ...m,
+          selected: !!m.canonical,
+        }))
+      );
+    } catch (err) {
+      setParseError(err instanceof Error ? err.message : "Failed to parse file");
+    } finally {
+      setParsing(false);
+    }
   }
 
   async function handleImport() {
@@ -101,7 +120,6 @@ export default function ResearchersPage() {
 
   // Success state
   if (importResult) {
-    refresh();
     return (
       <div className="max-w-2xl">
         <h2 className="text-2xl font-semibold mb-6 text-gray-900">Researchers</h2>
@@ -138,7 +156,7 @@ export default function ResearchersPage() {
           </div>
           <Button
             variant="outline"
-            onClick={() => setReplacing(true)}
+            onClick={() => setConfirmReplace(true)}
           >
             Replace roster
           </Button>
@@ -239,6 +257,28 @@ export default function ResearchersPage() {
           );
         })()}
 
+        <ConfirmDialog
+          open={confirmReplace}
+          onOpenChange={setConfirmReplace}
+          title="Upload a new roster?"
+          description={
+            <p className="text-xs text-gray-500">
+              Importing a new file performs a merge, not a clean replace.
+            </p>
+          }
+          preserved={[
+            "Existing researchers, scores, curations, and retrieval history",
+            "Researchers not listed in the new file (they are NOT removed)",
+          ]}
+          destroyed={[
+            "Identity fields for matching person_ids — overwritten with values from the new file",
+          ]}
+          confirmLabel="Continue"
+          cancelLabel="Stay on roster"
+          variant="warning"
+          onConfirm={() => setReplacing(true)}
+        />
+
         {/* Profile modal */}
         {profileResearcher && (
           <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center" onClick={() => setProfileResearcher(null)}>
@@ -314,10 +354,36 @@ export default function ResearchersPage() {
       </p>
 
       {!uploadResult ? (
-        <FileUpload
-          onFileSelected={handleFile}
-          description="Your faculty roster or researcher list — one person per row. At minimum, include a unique ID, first name, and last name. Optional: email, title, primary institution, department, doctoral year, ORCID."
-        />
+        parsing ? (
+          <Card className="border-gray-200 shadow-sm">
+            <CardContent className="p-8 flex items-center gap-3 justify-center">
+              <span className="inline-block w-4 h-4 border-2 border-[#cf4520] border-t-transparent rounded-full animate-spin" />
+              <p className="text-sm text-gray-700">
+                Parsing <span className="font-mono text-gray-900">{parsingFilename}</span>…
+              </p>
+            </CardContent>
+          </Card>
+        ) : parseError ? (
+          <Card className="border-red-300 bg-red-50 shadow-sm">
+            <CardContent className="p-5">
+              <p className="text-sm font-medium text-red-700 mb-1">Couldn&apos;t parse {parsingFilename}</p>
+              <p className="text-xs text-red-600 mb-3 break-words">{parseError}</p>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => { setParseError(null); setParsingFilename(null); }}
+              >
+                Try a different file
+              </Button>
+            </CardContent>
+          </Card>
+        ) : (
+          <FileUpload
+            onFileSelected={handleFile}
+            description="Your faculty roster or researcher list — one person per row. At minimum, include a unique ID, first name, and last name. Optional: email, title, primary institution, department, doctoral year, ORCID."
+            templateHref="/researcher-template.csv"
+          />
+        )
       ) : (
         <div className="space-y-6">
           <div className="flex items-center justify-between">
@@ -327,9 +393,11 @@ export default function ResearchersPage() {
             <Button
               variant="outline"
               size="sm"
+              disabled={importing}
               onClick={() => {
                 setUploadResult(null);
                 setMappings([]);
+                setParsingFilename(null);
               }}
             >
               Upload different file
@@ -338,6 +406,7 @@ export default function ResearchersPage() {
 
           <ColumnMapper
             mappings={mappings}
+            disabled={importing}
             onMappingChange={(i, canonical) => {
               const updated = [...mappings];
               updated[i] = { ...updated[i], canonical, selected: !!canonical };
@@ -382,6 +451,7 @@ export default function ResearchersPage() {
               <input
                 type="checkbox"
                 checked={importGoldStandard}
+                disabled={importing}
                 onChange={() => setImportGoldStandard(!importGoldStandard)}
                 className="rounded border-green-400"
               />
@@ -399,9 +469,11 @@ export default function ResearchersPage() {
           <div className="flex justify-end gap-3">
             <Button
               variant="outline"
+              disabled={importing}
               onClick={() => {
                 setUploadResult(null);
                 setMappings([]);
+                setParsingFilename(null);
                 if (replacing) setReplacing(false);
               }}
             >
