@@ -29,6 +29,11 @@ services:
       - ./models:/app/models
       - ./data:/app/data
       - ./config:/app/config
+      # Bundled sample CSVs live in the frontend public dir (also
+      # served as static downloads). The api reads them server-side via
+      # /api/researchers/load-sample to populate identity + curation
+      # tables for the demo.
+      - ./frontend/public/sample:/app/frontend/public/sample:ro
       - auth_token:/root/.reciter-desktop
     environment:
       - DATABASE_URL=mysql+pymysql://reciter:reciter_local@db:3306/reciter_desktop
