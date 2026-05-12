@@ -1,55 +1,41 @@
 // frontend/app/pipeline/page.tsx
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { PipelineRow, Phase } from "@/components/pipeline-row";
-import { apiFetch, apiExportUrl } from "@/lib/api";
-import { subscribeSSE } from "@/lib/sse";
+import { apiExportUrl } from "@/lib/api";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { PrerequisiteGate } from "@/components/prerequisite-gate";
 import { useWorkflow } from "@/lib/workflow";
-
-interface ResearcherStatus {
-  personId: string;
-  name: string;
-  phase: Phase;
-  articleCount: number | null;
-  scoreRange?: string;
-}
+import { usePipeline } from "@/lib/pipeline-context";
 
 export default function PipelinePage() {
-  const { researcherCount, assertionCount, refresh } = useWorkflow();
-  const [researchers, setResearchers] = useState<ResearcherStatus[]>([]);
-  const [running, setRunning] = useState(false);
-  const [completed, setCompleted] = useState(0);
-  const [total, setTotal] = useState(0);
-  const [totalArticles, setTotalArticles] = useState(0);
-  const [totalScored, setTotalScored] = useState(0);
+  const { researcherCount, assertionCount } = useWorkflow();
+  const {
+    researchers,
+    running,
+    completed,
+    total,
+    totalArticles,
+    totalScored,
+    startTime,
+    maxWorkers,
+    researcherStartTimes,
+    processingSet,
+    logLines,
+    pipelineFinished,
+    summary,
+    startPipeline,
+    cancelPipeline,
+    resetPipeline,
+  } = usePipeline();
+
   const [mode, setMode] = useState<"full" | "score_only">("full");
+  const [confirmCancel, setConfirmCancel] = useState(false);
   const hasExistingScores = researchers.some((r) => r.phase === "complete");
-  const [showCompleted, setShowCompleted] = useState(false);
-
-  // Worker count and run tracking (per D-15)
-  // currentRunId stored for future historical run selector (phase 6)
-  const [maxWorkers, setMaxWorkers] = useState<number | null>(null);
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const [currentRunId, setCurrentRunId] = useState<number | null>(null);
-
-  // Timing state
-  const [startTime, setStartTime] = useState<number | null>(null);
-  const [avgTimePerResearcher, setAvgTimePerResearcher] = useState<number>(0);
-  const [researcherStartTimes, setResearcherStartTimes] = useState<Record<string, number>>({});
-
-  // Live activity log
-  const [logLines, setLogLines] = useState<Array<{ time: string; msg: string; type: "info" | "success" | "error" }>>([]);
-
-  // In-flight researcher tracking (client-side inference: ThreadPoolExecutor picks in submission order)
-  const [processingSet, setProcessingSet] = useState<Set<string>>(new Set());
-  const personIdsRef = useRef<string[]>([]);
-  const nextToStartRef = useRef<number>(0);
-  const lastCompletionTimeRef = useRef<number | null>(null);
 
   // Tick every second while running so elapsed/remaining timers update
   const [, setTick] = useState(0);
@@ -58,58 +44,6 @@ export default function PipelinePage() {
     const id = setInterval(() => setTick((t) => t + 1), 1000);
     return () => clearInterval(id);
   }, [running]);
-
-  function addLog(msg: string, type: "info" | "success" | "error" = "info") {
-    const t = new Date().toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
-    setLogLines((prev) => [...prev.slice(-49), { time: t, msg, type }]);
-  }
-  const [pipelineFinished, setPipelineFinished] = useState(false);
-  const [summary, setSummary] = useState<{
-    high_confidence: number;
-    review_band: number;
-    unlikely: number;
-  } | null>(null);
-  const [orcidReport, setOrcidReport] = useState<{
-    total_with_orcid: number;
-    tier_counts: Record<string, number>;
-    inferences: Array<{
-      person_id: string;
-      first_name: string;
-      last_name: string;
-      orcid: string;
-      confidence_tier: string;
-      confidence_score: number;
-      accepted_articles: number;
-      total_articles: number;
-      identity_orcid: string;
-      orcid_matches_identity: boolean;
-    }>;
-  } | null>(null);
-
-  useEffect(() => {
-    async function loadResearchers() {
-      try {
-        const list = await apiFetch<Array<{
-          person_id: string;
-          first_name: string;
-          last_name: string;
-          article_count: number;
-          score_count: number;
-        }>>("/api/researchers");
-        setResearchers(
-          list.map((r) => ({
-            personId: r.person_id,
-            name: `${r.first_name} ${r.last_name}`,
-            phase: r.score_count > 0 ? "complete" as Phase : "queued" as Phase,
-            articleCount: r.article_count || null,
-          }))
-        );
-      } catch {
-        // API not available
-      }
-    }
-    loadResearchers();
-  }, []);
 
   function formatDuration(ms: number): string {
     const seconds = Math.floor(ms / 1000);
@@ -120,123 +54,6 @@ export default function PipelinePage() {
     const hours = Math.floor(minutes / 60);
     const mins = minutes % 60;
     return `${hours}h ${mins}m`;
-  }
-
-  function startPipeline() {
-    setRunning(true);
-    setCompleted(0);
-    setStartTime(Date.now());
-    setAvgTimePerResearcher(0);
-    setResearcherStartTimes({});
-    setMaxWorkers(null);
-    setCurrentRunId(null);
-    setProcessingSet(new Set());
-    setLogLines([]);
-    lastCompletionTimeRef.current = null;
-    const personIds = researchers.map((r) => r.personId);
-    personIdsRef.current = personIds;
-    nextToStartRef.current = 0;
-    setTotal(personIds.length);
-    // Capture name map at start time (names don't change during run)
-    const nameMap = Object.fromEntries(researchers.map((r) => [r.personId, r.name]));
-
-    subscribeSSE(
-      "/api/pipeline/run",
-      { person_ids: personIds, mode },
-      (event) => {
-        if (event.type === "started") {
-          const mw = (event.max_workers as number) ?? 3;
-          setMaxWorkers(mw);
-          setCurrentRunId((event.run_id as number) ?? null);
-          lastCompletionTimeRef.current = Date.now();
-          // Mark first max_workers researchers as in-flight
-          const initialIds = personIdsRef.current.slice(0, mw);
-          setProcessingSet(new Set(initialIds));
-          nextToStartRef.current = Math.min(mw, personIdsRef.current.length);
-          addLog(`Pipeline started — ${personIdsRef.current.length} researchers · ${mw} workers`);
-        } else if (event.type === "queued") {
-          const pid = event.person_id as string;
-          setResearcherStartTimes((prev) => ({ ...prev, [pid]: Date.now() }));
-          setResearchers((prev) =>
-            prev.map((r) =>
-              r.personId === pid ? { ...r, phase: "queued" } : r
-            )
-          );
-        } else if (event.type === "complete_one") {
-          const artCount = event.article_count as number;
-          const scoredCount = event.scored_count as number;
-          const scoreMin = event.score_min as number | undefined;
-          const scoreMax = event.score_max as number | undefined;
-          const completedCount = event.completed as number;
-          const pid = event.person_id as string;
-
-          setCompleted(completedCount);
-          setTotalArticles((prev) => prev + artCount);
-          setTotalScored((prev) => prev + scoredCount);
-
-          const now = Date.now();
-          if (lastCompletionTimeRef.current !== null) {
-            const delta = now - lastCompletionTimeRef.current;
-            setAvgTimePerResearcher((prev) => prev === 0 ? delta : (prev + delta) / 2);
-          }
-          lastCompletionTimeRef.current = now;
-
-          // Advance processing set: remove completed, enqueue next in line
-          setProcessingSet((prev) => {
-            const next = new Set(prev);
-            next.delete(pid);
-            const idx = nextToStartRef.current;
-            if (idx < personIdsRef.current.length) {
-              next.add(personIdsRef.current[idx]);
-              nextToStartRef.current = idx + 1;
-            }
-            return next;
-          });
-
-          setResearchers((prev) =>
-            prev.map((r) =>
-              r.personId === pid
-                ? {
-                    ...r,
-                    phase: event.error ? "error" : "complete",
-                    articleCount: artCount,
-                    scoreRange:
-                      scoreMin !== undefined && scoreMax !== undefined
-                        ? `${Math.round(scoreMin * 100)}\u2013${Math.round(scoreMax * 100)}`
-                        : undefined,
-                  }
-                : r
-            )
-          );
-
-          const resName = nameMap[pid] ?? pid;
-          if (event.error) {
-            addLog(`✗ ${resName} — ${event.error as string}`, "error");
-          } else {
-            const scoreStr =
-              scoreMin !== undefined && scoreMax !== undefined
-                ? ` · scores ${Math.round(scoreMin * 100)}–${Math.round(scoreMax * 100)}`
-                : "";
-            addLog(`✓ ${resName} — ${scoredCount} articles${scoreStr}`, "success");
-          }
-        } else if (event.type === "finished") {
-          setRunning(false);
-          setPipelineFinished(true);
-          setProcessingSet(new Set());
-          addLog("Pipeline complete");
-          refresh();
-          apiFetch<{
-            high_confidence: number;
-            review_band: number;
-            unlikely: number;
-          }>("/api/pipeline/status").then(setSummary).catch(() => {});
-          apiFetch<typeof orcidReport>("/api/scores/orcid-report")
-            .then((d) => { if (d && d.total_with_orcid > 0) setOrcidReport(d); })
-            .catch(() => {});
-        }
-      },
-      () => { setRunning(false); setProcessingSet(new Set()); }
-    );
   }
 
   // Derive display phases: override "queued" → active phase for in-flight researchers
@@ -254,14 +71,19 @@ export default function PipelinePage() {
   );
   const queuedResearchers = displayedResearchers.filter((r) => r.phase === "queued");
 
-  // Determine bottleneck researchers: processing time > 2x average
+  // Determine bottleneck researchers: article-count-normalized rate, 5-minute floor
   const now = Date.now();
+  const msPerArticle = startTime && totalArticles > 0
+    ? (now - startTime) / totalArticles
+    : 0;
   const bottleneckIds = new Set<string>(
-    avgTimePerResearcher > 0
+    msPerArticle > 0
       ? activeResearchers
           .filter((r) => {
             const rStart = researcherStartTimes[r.personId];
-            return rStart !== undefined && (now - rStart) > avgTimePerResearcher * 2;
+            if (!rStart) return false;
+            const expectedMs = (r.articleCount ?? 100) * msPerArticle;
+            return (now - rStart) > Math.max(expectedMs * 2, 5 * 60 * 1000);
           })
           .map((r) => r.personId)
       : []
@@ -332,7 +154,7 @@ export default function PipelinePage() {
               </div>
             )}
             <Button
-              onClick={startPipeline}
+              onClick={() => startPipeline(mode)}
               disabled={researchers.length === 0}
               className="bg-[#cf4520] hover:bg-[#a3381a] text-white"
             >
@@ -344,12 +166,22 @@ export default function PipelinePage() {
 
       {(running || completed > 0) && (
         <div className="mb-6">
-          <div className="flex justify-between text-xs text-gray-500 mb-1">
+          <div className="flex justify-between items-center text-xs text-gray-500 mb-1">
             <span>Overall Progress</span>
-            <span>
-              {completed} of {total} researchers &bull; {totalArticles.toLocaleString()} articles
-              &bull; {totalScored.toLocaleString()} scored
-            </span>
+            <div className="flex items-center gap-3">
+              <span>
+                {completed} of {total} researchers &bull; {totalArticles.toLocaleString()} articles
+                &bull; {totalScored.toLocaleString()} scored
+              </span>
+              {running && (
+                <button
+                  onClick={() => setConfirmCancel(true)}
+                  className="px-2 py-0.5 text-xs text-red-600 border border-red-200 rounded hover:bg-red-50 transition-colors"
+                >
+                  Cancel
+                </button>
+              )}
+            </div>
           </div>
           <div className="relative h-3.5 w-full overflow-hidden rounded-full bg-gray-200">
             <div
@@ -364,8 +196,11 @@ export default function PipelinePage() {
                 {maxWorkers && (
                   <span>Workers: <strong className="text-gray-600">{Math.min(total - completed, maxWorkers)}/{maxWorkers} active</strong></span>
                 )}
-                {completed > 0 && (
-                  <span>Est. remaining: {formatDuration(avgTimePerResearcher * (total - completed))}</span>
+                {completed > 0 && msPerArticle > 0 && maxWorkers && (
+                  <span>Est. remaining: {formatDuration(
+                    [...activeResearchers, ...queuedResearchers]
+                      .reduce((sum, r) => sum + (r.articleCount ?? 100), 0) * msPerArticle / maxWorkers
+                  )}</span>
                 )}
               </div>
             </div>
@@ -428,25 +263,13 @@ export default function PipelinePage() {
             </>
           )}
 
-          {/* Completed researchers — collapsed */}
+          {/* Completed researchers */}
           {completedResearchers.length > 0 && (
-            <div className="border-t border-gray-200 mt-2 pt-2">
-              <button
-                className="w-full flex items-center justify-between px-4 py-2 text-sm hover:bg-gray-50 rounded"
-                onClick={() => setShowCompleted(!showCompleted)}
-              >
-                <span className="text-gray-600">
-                  {"\u2713"} {completedResearchers.length} complete
-                </span>
-                <span className="text-gray-400 text-xs">
-                  {showCompleted ? "Hide" : "Show"} {showCompleted ? "\u25B4" : "\u25BE"}
-                </span>
-              </button>
-              {showCompleted &&
-                completedResearchers.map((r) => (
-                  <PipelineRow key={r.personId} {...r} />
-                ))}
-            </div>
+            <>
+              {completedResearchers.map((r) => (
+                <PipelineRow key={r.personId} {...r} />
+              ))}
+            </>
           )}
         </div>
       )}
@@ -549,90 +372,8 @@ export default function PipelinePage() {
             </CardContent>
           </Card>
 
-          {/* ORCID Inference Report */}
-          {orcidReport && orcidReport.total_with_orcid > 0 && (
-            <Card className="border-blue-200 bg-blue-50/50 shadow-sm">
-              <CardContent className="p-5">
-                <div className="flex items-center justify-between mb-3">
-                  <p className="text-sm font-medium text-gray-800">
-                    ORCID Inference Report
-                  </p>
-                  <a href={apiExportUrl("/api/scores/orcid-report/export")} download>
-                    <Button variant="outline" size="sm">Export CSV</Button>
-                  </a>
-                </div>
-                <p className="text-xs text-gray-600 mb-4 leading-relaxed">
-                  We found ORCID identifiers for{" "}
-                  <strong>{orcidReport.total_with_orcid}</strong> researchers by
-                  examining the author position in scored articles. When the same
-                  ORCID consistently appears at the target author position across
-                  high-confidence articles, we can infer it belongs to the researcher.
-                </p>
-
-                {/* Tier summary */}
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
-                  {[
-                    { key: "confirmed", label: "Confirmed", color: "text-green-700", bg: "bg-green-100",
-                      tip: "5+ high-confidence articles with the same ORCID, no contradictions" },
-                    { key: "likely", label: "Likely", color: "text-blue-700", bg: "bg-blue-100",
-                      tip: "2-4 high-confidence articles with consistent ORCID" },
-                    { key: "possible", label: "Possible", color: "text-amber-700", bg: "bg-amber-100",
-                      tip: "Single article — could be correct but not enough to confirm" },
-                    { key: "unreliable", label: "Unreliable", color: "text-red-600", bg: "bg-red-100",
-                      tip: "Only in low-scoring articles, or competing ORCIDs" },
-                  ].map((t) => (
-                    <div key={t.key} className={`rounded-lg p-3 ${t.bg}`}>
-                      <p className={`text-xl font-bold ${t.color}`}>
-                        {orcidReport.tier_counts[t.key] || 0}
-                      </p>
-                      <p className={`text-xs font-medium ${t.color}`}>{t.label}</p>
-                    </div>
-                  ))}
-                </div>
-
-                {/* Top inferences preview */}
-                {orcidReport.inferences.length > 0 && (
-                  <div className="border border-gray-200 rounded-lg overflow-hidden text-xs">
-                    <div className="grid grid-cols-[1fr_160px_80px_70px] gap-2 px-3 py-1.5 bg-gray-100 text-gray-500 uppercase tracking-wider font-medium" style={{ fontSize: "9px" }}>
-                      <span>Researcher</span>
-                      <span>ORCID</span>
-                      <span>Tier</span>
-                      <span>Articles</span>
-                    </div>
-                    {orcidReport.inferences.slice(0, 8).map((r, i) => (
-                      <div key={i} className="grid grid-cols-[1fr_160px_80px_70px] gap-2 px-3 py-1.5 border-t border-gray-100 text-gray-700">
-                        <span className="truncate">{r.first_name} {r.last_name}</span>
-                        <a
-                          href={`https://orcid.org/${r.orcid}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-[#cf4520] truncate"
-                        >
-                          {r.orcid}
-                        </a>
-                        <span className={
-                          r.confidence_tier === "confirmed" ? "text-green-600" :
-                          r.confidence_tier === "likely" ? "text-blue-600" :
-                          r.confidence_tier === "possible" ? "text-amber-600" : "text-red-500"
-                        }>
-                          {r.confidence_tier}
-                        </span>
-                        <span>{r.accepted_articles}/{r.total_articles}</span>
-                      </div>
-                    ))}
-                    {orcidReport.inferences.length > 8 && (
-                      <div className="px-3 py-1.5 border-t border-gray-100 text-gray-400 text-center">
-                        ... and {orcidReport.inferences.length - 8} more (download CSV for full report)
-                      </div>
-                    )}
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          )}
-
           {/* Next steps */}
-          <div className="flex gap-3">
+          <div className="flex gap-3 flex-wrap">
             <Link href="/results">
               <Button className="bg-[#cf4520] hover:bg-[#a3381a] text-white">
                 View Results
@@ -648,9 +389,32 @@ export default function PipelinePage() {
             <a href={apiExportUrl("/api/scores/export")} download>
               <Button variant="outline">Export All Scores (CSV)</Button>
             </a>
+            <Button variant="outline" onClick={resetPipeline}>
+              Run again
+            </Button>
           </div>
         </div>
       )}
+
+      <ConfirmDialog
+        open={confirmCancel}
+        onOpenChange={setConfirmCancel}
+        title="Cancel pipeline run?"
+        description={
+          <p className="text-xs text-gray-500">
+            The run will be marked <span className="font-mono">PARTIAL</span>. You can resume
+            scoring later from the Retrieve &amp; Score page.
+          </p>
+        }
+        preserved={["Completed researchers and their scores remain in the database"]}
+        destroyed={[
+          "Researchers currently being scored will be stopped mid-run; in-flight work is lost",
+          "Queued researchers will not be processed",
+        ]}
+        confirmLabel="Cancel run"
+        cancelLabel="Keep running"
+        onConfirm={cancelPipeline}
+      />
     </div>
     </PrerequisiteGate>
   );
