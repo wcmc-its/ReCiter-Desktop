@@ -206,19 +206,22 @@ docker run -d --name reciter-desktop-db \
   -v reciter-desktop-data:/var/lib/mysql \
   mariadb:11
 
-# 2. Backend
+# 2. Bootstrap schema (first run only)
+mariadb -h 127.0.0.1 -P 3306 -ureciter -preciter_local reciter_desktop < api/schema.sql
+
+# 3. Backend
 python -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 uvicorn api.main:app --reload --port 8090
 
-# 3. Frontend
+# 4. Frontend
 cd frontend
 npm install
 npm run dev
 ```
 
-The backend defaults to `mysql+pymysql://reciter:reciter_local@localhost:3306/reciter_desktop` — override with `DATABASE_URL`. Alembic migrations run on startup.
+The backend defaults to `mysql+pymysql://reciter:reciter_local@localhost:3306/reciter_desktop` — override with `DATABASE_URL`. After the one-time `schema.sql` bootstrap, Alembic migrations run on every backend start to apply any incremental schema changes. (`docker compose up` mounts `schema.sql` into MariaDB's init directory automatically, so this manual step is only needed for the bare `docker run` path above.)
 
 ---
 
