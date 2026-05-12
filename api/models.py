@@ -97,6 +97,6 @@ class Curation(Base):
     person_id = Column(String(128), ForeignKey("identity.person_id", ondelete="CASCADE"), primary_key=True)
     pmid = Column(String(20), ForeignKey("article.pmid", ondelete="CASCADE"), primary_key=True)
     assertion = Column(Enum("ACCEPTED", "REJECTED"), nullable=False)
-    source = Column(Enum("import", "manual"), default="import")
+    source = Column(Enum("import"), default="import")
     created_at = Column(TIMESTAMP, server_default=func.now())
     updated_at = Column(TIMESTAMP, server_default=func.now(), onupdate=func.now())

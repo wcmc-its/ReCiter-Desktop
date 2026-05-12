@@ -70,7 +70,7 @@ CREATE TABLE IF NOT EXISTS curation (
     person_id VARCHAR(128),
     pmid VARCHAR(20),
     assertion ENUM('ACCEPTED', 'REJECTED') NOT NULL,
-    source ENUM('import', 'manual') DEFAULT 'import',
+    source ENUM('import') DEFAULT 'import',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     PRIMARY KEY (person_id, pmid),
