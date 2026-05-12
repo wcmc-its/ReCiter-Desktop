@@ -1,3 +1,4 @@
+import logging
 import os
 from contextlib import asynccontextmanager
 
@@ -7,6 +8,24 @@ from alembic.config import Config
 from alembic import command
 
 from api.routers import institution, researchers, articles, pipeline, scores, stats
+from api.services.upload_utils import sweep_stale_uploads
+
+logger = logging.getLogger(__name__)
+
+
+# Local-only desktop app: callable from the Next.js dev server and an
+# Electron-style packaged shell. Anything else is rejected by CORS.
+# Override at deploy time via ALLOWED_ORIGINS (comma-separated).
+_DEFAULT_ORIGINS = (
+    "http://localhost:3000,http://127.0.0.1:3000,"
+    "http://localhost:3002,http://127.0.0.1:3002,"
+    "http://localhost:3012,http://127.0.0.1:3012"
+)
+ALLOWED_ORIGINS = [
+    o.strip()
+    for o in os.environ.get("ALLOWED_ORIGINS", _DEFAULT_ORIGINS).split(",")
+    if o.strip()
+]
 
 
 @asynccontextmanager
@@ -25,6 +44,13 @@ async def lifespan(app):
         ),
     )
     command.upgrade(cfg, "head")
+
+    # Garbage-collect abandoned upload staging files left over from
+    # previous sessions (uploads with no follow-up import).
+    removed = sweep_stale_uploads()
+    if removed:
+        logger.info(f"Removed {removed} stale upload file(s) on startup")
+
     yield
 
 
@@ -32,10 +58,10 @@ app = FastAPI(title="ReCiter Desktop API", version="1.0.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type"],
 )
 
 app.include_router(institution.router)

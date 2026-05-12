@@ -11,11 +11,13 @@ import pandas as pd
 from api.database import get_db
 from api.models import Identity, PersonArticle, PersonArticleScore, Curation
 from api.services.column_mapper import detect_mappings
+from api.services.upload_utils import (
+    UPLOAD_DIR,
+    save_upload_streaming,
+    upload_path,
+)
 
 router = APIRouter(prefix="/api/researchers", tags=["researchers"])
-
-UPLOAD_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "_uploads")
-os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 
 class ColumnMapping(BaseModel):
@@ -31,11 +33,9 @@ class ImportRequest(BaseModel):
 
 @router.post("/upload")
 async def upload_file(file: UploadFile = File(...)):
-    content = await file.read()
     file_id = f"upload_{uuid.uuid4().hex[:12]}"
-    filepath = os.path.join(UPLOAD_DIR, file_id)
-    with open(filepath, "wb") as f:
-        f.write(content)
+    filepath = upload_path(file_id)
+    content = await save_upload_streaming(file, filepath)
 
     filename = file.filename or "upload.csv"
     if filename.endswith((".xlsx", ".xls")):
@@ -88,7 +88,7 @@ async def upload_file(file: UploadFile = File(...)):
 
 @router.post("/import")
 def import_researchers(req: ImportRequest, db: Session = Depends(get_db)):
-    filepath = os.path.join(UPLOAD_DIR, req.file_id)
+    filepath = upload_path(req.file_id)
     if not os.path.exists(filepath):
         raise HTTPException(status_code=404, detail="Upload not found. Please re-upload the file.")
     with open(filepath, "rb") as f:
@@ -180,8 +180,12 @@ def list_researchers(db: Session = Depends(get_db)):
             "first_name": i.first_name,
             "last_name": i.last_name,
             "middle_name": i.middle_name,
+            "primary_email": i.primary_email,
+            "primary_institution": i.primary_institution,
             "department": i.department,
             "title": i.title,
+            "orcid": i.orcid,
+            "doctoral_year": i.doctoral_year,
             "article_count": article_counts.get(i.person_id, 0),
             "score_count": score_counts.get(i.person_id, 0),
         }

@@ -12,13 +12,16 @@ import pandas as pd
 from api.database import SessionLocal, get_db
 from api.models import Article, PersonArticle, Curation
 from api.services.column_mapper import detect_mappings
+from api.services.upload_utils import (
+    UPLOAD_DIR,
+    save_upload_streaming,
+    upload_path,
+    validate_file_id,
+)
 from core.pubmed import fetch_articles
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/articles", tags=["articles"])
-
-UPLOAD_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "_uploads")
-os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 
 class ColumnMapping(BaseModel):
@@ -81,13 +84,11 @@ async def upload_file(file: UploadFile = File(...)):
 
     No DB writes happen here. Caller must follow up with POST /import.
     """
-    content = await file.read()
     filename = file.filename or "pmids.csv"
 
     file_id = f"articles_{uuid.uuid4().hex[:12]}"
-    filepath = os.path.join(UPLOAD_DIR, file_id)
-    with open(filepath, "wb") as f:
-        f.write(content)
+    filepath = upload_path(file_id)
+    content = await save_upload_streaming(file, filepath)
     # Persist original filename so /import can pick the right reader
     with open(filepath + ".name", "w") as f:
         f.write(filename)
@@ -136,7 +137,7 @@ def import_articles(req: ImportRequest):
                             total_pmids, already_existed}
       - {type: "error", message}
     """
-    filepath = os.path.join(UPLOAD_DIR, req.file_id)
+    filepath = upload_path(req.file_id)
     if not os.path.exists(filepath):
         raise HTTPException(status_code=404, detail="Upload not found. Please re-upload the file.")
 
@@ -153,126 +154,133 @@ def import_articles(req: ImportRequest):
     def event_stream():
         db = SessionLocal()
         try:
-            yield f"data: {json.dumps({'type': 'status', 'message': 'Reading file...'})}\n\n"
-
             try:
-                df = _read_dataframe(content, filename)
-            except Exception as e:
-                yield f"data: {json.dumps({'type': 'error', 'message': f'Could not parse file: {e}'})}\n\n"
-                return
+                yield f"data: {json.dumps({'type': 'status', 'message': 'Reading file...'})}\n\n"
 
-            df = df.rename(columns=rename_map)
-
-            if "person_id" not in df.columns or "pmid" not in df.columns:
-                yield f"data: {json.dumps({'type': 'error', 'message': 'File must map both person_id and pmid columns.'})}\n\n"
-                return
-
-            from api.routers.institution import get_pubmed_api_key
-            api_key = get_pubmed_api_key(db)
-
-            df = df.dropna(subset=["pmid"])
-            try:
-                all_pmids = [int(p) for p in df["pmid"].astype(int).unique()]
-            except (ValueError, TypeError) as e:
-                yield f"data: {json.dumps({'type': 'error', 'message': f'Invalid PMID value: {e}'})}\n\n"
-                return
-
-            has_assertions = req.import_gold_standard and "assertion" in df.columns
-
-            existing_pmids = {str(a.pmid) for a in db.query(Article.pmid).all()}
-            new_pmids = [p for p in all_pmids if str(p) not in existing_pmids]
-            already_existed = len(all_pmids) - len(new_pmids)
-
-            yield f"data: {json.dumps({'type': 'status', 'message': f'{len(all_pmids)} unique PMIDs ({already_existed} already on file, {len(new_pmids)} to fetch)'})}\n\n"
-
-            # Collect per-batch progress events from the synchronous fetcher.
-            progress_events: list[dict] = []
-
-            def on_batch(event: dict):
-                progress_events.append(event)
-
-            article_count = 0
-            if new_pmids:
-                yield f"data: {json.dumps({'type': 'status', 'message': 'Fetching metadata from PubMed...'})}\n\n"
-                # Run fetch in chunks so we can flush progress between batches.
-                # core.pubmed already batches internally, but the on_batch callback
-                # is invoked after each one — we collect them inside the closure
-                # and yield them on the next iteration.
-                CHUNK = 200
-                chunks = [new_pmids[i:i + CHUNK] for i in range(0, len(new_pmids), CHUNK)]
-                fetched_total = 0
-                for chunk_idx, chunk in enumerate(chunks, start=1):
-                    progress_events.clear()
-                    fetched = fetch_articles(chunk, api_key=api_key or "", on_batch=on_batch)
-                    for art in fetched:
-                        if _store_article(db, art):
-                            article_count += 1
-                    db.commit()
-                    fetched_total += len(fetched)
-                    # Flush any per-batch events from the fetcher (one per chunk here)
-                    for ev in progress_events:
-                        merged = {
-                            "type": "fetch_progress",
-                            "batch": chunk_idx,
-                            "batches": len(chunks),
-                            "fetched": fetched_total,
-                            "total": len(new_pmids),
-                        }
-                        if "error" in ev:
-                            merged["error"] = ev["error"]
-                        yield f"data: {json.dumps(merged)}\n\n"
-
-            known_pmids = {str(a.pmid) for a in db.query(Article.pmid).all()}
-
-            yield f"data: {json.dumps({'type': 'status', 'message': 'Linking researchers to articles...'})}\n\n"
-            link_count = 0
-            for _, row in df.iterrows():
-                pid = str(row["person_id"]).strip()
                 try:
-                    pmid = str(int(row["pmid"])).strip()
-                except (ValueError, TypeError):
-                    continue
-                if pid and pmid and pmid in known_pmids:
-                    existing = db.query(PersonArticle).filter_by(
-                        person_id=pid, pmid=pmid
-                    ).first()
-                    if not existing:
-                        db.add(PersonArticle(person_id=pid, pmid=pmid, source="upload"))
-                        link_count += 1
+                    df = _read_dataframe(content, filename)
+                except Exception as e:
+                    yield f"data: {json.dumps({'type': 'error', 'message': f'Could not parse file: {e}'})}\n\n"
+                    return
 
-            curation_count = 0
-            if has_assertions:
-                yield f"data: {json.dumps({'type': 'status', 'message': 'Importing assertions...'})}\n\n"
+                df = df.rename(columns=rename_map)
+
+                if "person_id" not in df.columns or "pmid" not in df.columns:
+                    yield f"data: {json.dumps({'type': 'error', 'message': 'File must map both person_id and pmid columns.'})}\n\n"
+                    return
+
+                from api.routers.institution import get_pubmed_api_key
+                api_key = get_pubmed_api_key(db)
+
+                df = df.dropna(subset=["pmid"])
+                try:
+                    all_pmids = [int(p) for p in df["pmid"].astype(int).unique()]
+                except (ValueError, TypeError) as e:
+                    yield f"data: {json.dumps({'type': 'error', 'message': f'Invalid PMID value: {e}'})}\n\n"
+                    return
+
+                has_assertions = req.import_gold_standard and "assertion" in df.columns
+
+                existing_pmids = {str(a.pmid) for a in db.query(Article.pmid).all()}
+                new_pmids = [p for p in all_pmids if str(p) not in existing_pmids]
+                already_existed = len(all_pmids) - len(new_pmids)
+
+                yield f"data: {json.dumps({'type': 'status', 'message': f'{len(all_pmids)} unique PMIDs ({already_existed} already on file, {len(new_pmids)} to fetch)'})}\n\n"
+
+                # Collect per-batch progress events from the synchronous fetcher.
+                progress_events: list[dict] = []
+
+                def on_batch(event: dict):
+                    progress_events.append(event)
+
+                article_count = 0
+                if new_pmids:
+                    yield f"data: {json.dumps({'type': 'status', 'message': 'Fetching metadata from PubMed...'})}\n\n"
+                    # Run fetch in chunks so we can flush progress between batches.
+                    # core.pubmed already batches internally, but the on_batch callback
+                    # is invoked after each one — we collect them inside the closure
+                    # and yield them on the next iteration.
+                    CHUNK = 200
+                    chunks = [new_pmids[i:i + CHUNK] for i in range(0, len(new_pmids), CHUNK)]
+                    fetched_total = 0
+                    for chunk_idx, chunk in enumerate(chunks, start=1):
+                        progress_events.clear()
+                        fetched = fetch_articles(chunk, api_key=api_key or "", on_batch=on_batch)
+                        for art in fetched:
+                            if _store_article(db, art):
+                                article_count += 1
+                        db.commit()
+                        fetched_total += len(fetched)
+                        # Flush any per-batch events from the fetcher (one per chunk here)
+                        for ev in progress_events:
+                            merged = {
+                                "type": "fetch_progress",
+                                "batch": chunk_idx,
+                                "batches": len(chunks),
+                                "fetched": fetched_total,
+                                "total": len(new_pmids),
+                            }
+                            if "error" in ev:
+                                merged["error"] = ev["error"]
+                            yield f"data: {json.dumps(merged)}\n\n"
+
+                known_pmids = {str(a.pmid) for a in db.query(Article.pmid).all()}
+
+                yield f"data: {json.dumps({'type': 'status', 'message': 'Linking researchers to articles...'})}\n\n"
+                link_count = 0
                 for _, row in df.iterrows():
                     pid = str(row["person_id"]).strip()
                     try:
                         pmid = str(int(row["pmid"])).strip()
                     except (ValueError, TypeError):
                         continue
-                    assertion = str(row.get("assertion", "")).strip().upper()
-                    if pid and pmid and pmid in known_pmids and assertion in ("ACCEPTED", "REJECTED"):
-                        existing = db.query(Curation).filter_by(
+                    if pid and pmid and pmid in known_pmids:
+                        existing = db.query(PersonArticle).filter_by(
                             person_id=pid, pmid=pmid
                         ).first()
                         if not existing:
-                            db.add(Curation(
-                                person_id=pid, pmid=pmid,
-                                assertion=assertion, source="import",
-                            ))
-                            curation_count += 1
+                            db.add(PersonArticle(person_id=pid, pmid=pmid, source="upload"))
+                            link_count += 1
 
-            db.commit()
+                curation_count = 0
+                if has_assertions:
+                    yield f"data: {json.dumps({'type': 'status', 'message': 'Importing assertions...'})}\n\n"
+                    for _, row in df.iterrows():
+                        pid = str(row["person_id"]).strip()
+                        try:
+                            pmid = str(int(row["pmid"])).strip()
+                        except (ValueError, TypeError):
+                            continue
+                        assertion = str(row.get("assertion", "")).strip().upper()
+                        if pid and pmid and pmid in known_pmids and assertion in ("ACCEPTED", "REJECTED"):
+                            existing = db.query(Curation).filter_by(
+                                person_id=pid, pmid=pmid
+                            ).first()
+                            if not existing:
+                                db.add(Curation(
+                                    person_id=pid, pmid=pmid,
+                                    assertion=assertion, source="import",
+                                ))
+                                curation_count += 1
 
-            # Clean up staging files
-            try:
-                os.remove(filepath)
-                if os.path.exists(name_path):
-                    os.remove(name_path)
-            except OSError:
-                pass
+                db.commit()
 
-            yield f"data: {json.dumps({'type': 'complete', 'articles_fetched': article_count, 'links_created': link_count, 'curations_imported': curation_count, 'total_pmids': len(all_pmids), 'already_existed': already_existed})}\n\n"
+                yield f"data: {json.dumps({'type': 'complete', 'articles_fetched': article_count, 'links_created': link_count, 'curations_imported': curation_count, 'total_pmids': len(all_pmids), 'already_existed': already_existed})}\n\n"
+            except Exception as exc:
+                logger.exception("Article import failed")
+                try:
+                    db.rollback()
+                except Exception:
+                    pass
+                yield f"data: {json.dumps({'type': 'error', 'message': f'Import failed: {exc}'})}\n\n"
         finally:
+            # Clean up staging files whether import succeeded or failed
+            for p in (filepath, name_path):
+                if os.path.exists(p):
+                    try:
+                        os.remove(p)
+                    except OSError:
+                        pass
             db.close()
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")

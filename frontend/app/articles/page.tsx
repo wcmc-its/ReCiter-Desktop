@@ -1,7 +1,7 @@
 // frontend/app/articles/page.tsx
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
@@ -72,6 +72,9 @@ export default function ArticlesPage() {
   } | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
   const [importResult, setImportResult] = useState<ImportResult | null>(null);
+  const importAbortRef = useRef<(() => void) | null>(null);
+
+  useEffect(() => () => importAbortRef.current?.(), []);
 
   useEffect(() => {
     if (articleCount > 0 && !replacing && !importResult) {
@@ -109,7 +112,7 @@ export default function ArticlesPage() {
     setProgress(null);
     setImportError(null);
 
-    subscribeSSE(
+    importAbortRef.current = subscribeSSE(
       "/api/articles/import",
       {
         file_id: uploadResult.file_id,
@@ -146,7 +149,10 @@ export default function ArticlesPage() {
           });
         }
       },
-      () => setImporting(false)
+      () => {
+        setImporting(false);
+        importAbortRef.current = null;
+      }
     );
   }
 
