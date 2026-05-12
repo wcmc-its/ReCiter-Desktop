@@ -1,18 +1,46 @@
 "use client";
 
+import { useState } from "react";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { apiFetch } from "@/lib/api";
 import { useWorkflow } from "@/lib/workflow";
 
 export default function Dashboard() {
+  const router = useRouter();
   const {
     institution,
     researcherCount,
     articleCount,
     scoreCount,
     loading,
+    refresh,
   } = useWorkflow();
+
+  const [confirmReset, setConfirmReset] = useState(false);
+  const [resetting, setResetting] = useState(false);
+  const [resetError, setResetError] = useState<string | null>(null);
+
+  async function handleReset() {
+    setResetting(true);
+    setResetError(null);
+    try {
+      await apiFetch("/api/reset", { method: "POST" });
+      setConfirmReset(false);
+      refresh();
+      router.push("/setup");
+    } catch (err) {
+      setResetError(err instanceof Error ? err.message : "Reset failed");
+    } finally {
+      setResetting(false);
+    }
+  }
+
+  const hasAnyData =
+    !!institution || researcherCount > 0 || articleCount > 0 || scoreCount > 0;
 
   const hasInstitution = !!institution;
   const hasResearchers = researcherCount > 0;
@@ -112,6 +140,45 @@ export default function Dashboard() {
           </Link>
         </CardContent>
       </Card>
+
+      {/* Reset application — only when there's something to reset */}
+      {hasAnyData && (
+        <div className="mb-8 flex items-center justify-end gap-3 text-xs">
+          {resetError && <span className="text-red-600">{resetError}</span>}
+          <button
+            type="button"
+            onClick={() => setConfirmReset(true)}
+            disabled={resetting}
+            className="text-gray-400 hover:text-red-600 underline-offset-2 hover:underline disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          >
+            Reset application
+          </button>
+        </div>
+      )}
+
+      <ConfirmDialog
+        open={confirmReset}
+        onOpenChange={setConfirmReset}
+        title="Reset application?"
+        description={
+          <p className="text-xs text-gray-500">
+            Wipes every researcher, article, score, and curation from the local database.
+            Institution setup also clears. The app returns to its first-run state.
+          </p>
+        }
+        destroyed={[
+          institution ? <>Institution: <strong>{institution}</strong></> : null,
+          researcherCount > 0 ? `${researcherCount.toLocaleString()} researchers` : null,
+          articleCount > 0 ? `${articleCount.toLocaleString()} articles and any retrieval history` : null,
+          scoreCount > 0 ? `${scoreCount.toLocaleString()} scores` : null,
+        ].filter(Boolean) as React.ReactNode[]}
+        preserved={["The API token at ~/.reciter-desktop/api-token"]}
+        confirmLabel={resetting ? "Resetting…" : "Reset everything"}
+        cancelLabel="Keep my data"
+        variant="danger"
+        onConfirm={handleReset}
+        confirmDisabled={resetting}
+      />
 
       {/* Education panel */}
       <Card className="border-gray-200 bg-white shadow-sm">
