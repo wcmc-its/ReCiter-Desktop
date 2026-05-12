@@ -5,7 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { ScoreBadge } from "@/components/score-badge";
-import { apiFetch, apiExportUrl } from "@/lib/api";
+import { apiFetch, apiDownload } from "@/lib/api";
 import { subscribeSSE } from "@/lib/sse";
 
 interface ScoredArticle {
@@ -184,14 +184,12 @@ export default function ResearcherResultsPage() {
           <Button variant="outline" onClick={handleRescore} disabled={rescoring}>
             {rescoring ? "Re-scoring…" : "Re-score"}
           </Button>
-          <a
-            href={apiExportUrl("/api/scores/export", {
-              person_id: personId,
-            })}
-            download
+          <Button
+            variant="outline"
+            onClick={() => apiDownload("/api/scores/export", `scores-${personId}.csv`, { person_id: personId })}
           >
-            <Button variant="outline">Export CSV</Button>
-          </a>
+            Export CSV
+          </Button>
         </div>
       </div>
 

@@ -1,3 +1,5 @@
+import { getApiToken } from "./api";
+
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8090";
 
 export function subscribeSSE(
@@ -9,9 +11,13 @@ export function subscribeSSE(
   const controller = new AbortController();
 
   (async () => {
+    const token = await getApiToken();
     const res = await fetch(`${API_BASE}${path}`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "X-Reciter-Token": token,
+      },
       body: JSON.stringify(body),
       signal: controller.signal,
     });

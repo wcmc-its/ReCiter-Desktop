@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from alembic.config import Config
 from alembic import command
 
+from api.auth import TokenAuthMiddleware, TOKEN_HEADER, load_or_create_token
 from api.routers import institution, researchers, articles, pipeline, scores, stats
 from api.services.upload_utils import sweep_stale_uploads
 
@@ -56,12 +57,18 @@ async def lifespan(app):
 
 app = FastAPI(title="ReCiter Desktop API", version="1.0.0", lifespan=lifespan)
 
+# Token check runs before CORS in the response path (Starlette wraps middlewares
+# inside-out), but CORS preflight OPTIONS requests are exempted in the auth
+# middleware so the browser can still negotiate cross-origin headers.
+_API_TOKEN = load_or_create_token()
+app.add_middleware(TokenAuthMiddleware, token=_API_TOKEN)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
     allow_credentials=False,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["Content-Type"],
+    allow_headers=["Content-Type", TOKEN_HEADER],
 )
 
 app.include_router(institution.router)

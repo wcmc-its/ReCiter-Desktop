@@ -223,6 +223,8 @@ npm run dev
 
 The backend defaults to `mysql+pymysql://reciter:reciter_local@localhost:3306/reciter_desktop` — override with `DATABASE_URL`. After the one-time `schema.sql` bootstrap, Alembic migrations run on every backend start to apply any incremental schema changes. (`docker compose up` mounts `schema.sql` into MariaDB's init directory automatically, so this manual step is only needed for the bare `docker run` path above.)
 
+On first run, the backend generates a per-install API token at `~/.reciter-desktop/api-token` (mode 600). All `/api/*` requests must carry it in the `X-Reciter-Token` header — the Next.js shell reads the file server-side and surfaces it to the browser through a same-origin route, so other localhost-served pages cannot drive-by call the API.
+
 ---
 
 ## Requirements

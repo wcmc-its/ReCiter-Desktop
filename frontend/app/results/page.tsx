@@ -4,7 +4,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
-import { apiFetch, apiExportUrl } from "@/lib/api";
+import { apiFetch, apiDownload } from "@/lib/api";
 import { PrerequisiteGate } from "@/components/prerequisite-gate";
 import { useWorkflow } from "@/lib/workflow";
 
@@ -42,9 +42,12 @@ export default function ResultsPage() {
           </p>
         </div>
         {scored.length > 0 && (
-          <a href={apiExportUrl("/api/scores/export")} download>
-            <Button variant="outline">Export All Results (CSV)</Button>
-          </a>
+          <Button
+            variant="outline"
+            onClick={() => apiDownload("/api/scores/export", "scores.csv")}
+          >
+            Export All Results (CSV)
+          </Button>
         )}
       </div>
 

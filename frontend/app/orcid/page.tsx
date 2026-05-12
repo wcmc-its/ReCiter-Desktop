@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { apiFetch, apiExportUrl } from "@/lib/api";
+import { apiFetch, apiDownload } from "@/lib/api";
 import { PrerequisiteGate } from "@/components/prerequisite-gate";
 import { useWorkflow } from "@/lib/workflow";
 
@@ -74,9 +74,13 @@ export default function OrcidPage() {
         <div className="flex items-center justify-between mb-2">
           <h2 className="text-2xl font-semibold text-gray-900">ORCID Inference</h2>
           {report && report.total_with_orcid > 0 && (
-            <a href={apiExportUrl("/api/scores/orcid-report/export", { mode })} download>
-              <Button variant="outline" size="sm">Export CSV</Button>
-            </a>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => apiDownload("/api/scores/orcid-report/export", "orcid-report.csv", { mode })}
+            >
+              Export CSV
+            </Button>
           )}
         </div>
         <p className="text-gray-500 mb-4">
