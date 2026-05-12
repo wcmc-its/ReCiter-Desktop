@@ -63,10 +63,12 @@ A score of 95 means there is approximately a 95% probability the article belongs
 | Step | Page | What happens |
 |------|------|--------------|
 | 1 | **Institution Setup** | Enter your email domain. The app samples PubMed, discovers the affiliated organizations and email domains used by your authors, and asks you to classify each as Home, Collaborating, or Skip. |
-| 2 | **Researchers** | Upload a CSV / Excel / TSV roster. Column names are flexible — the app auto-detects 30+ common variations. Curation data (accept/reject decisions) can be imported in the same file. |
+| 2 | **Researchers** | Upload a CSV / Excel / TSV roster, *or* click **Load sample data** to populate the app with five real Weill Cornell researchers (Cole, Lyden, Albert, Wheeler, Ma) plus ~1,000 curated accept/reject assertions — no file needed. Column names on uploads are flexible; the app auto-detects 30+ common variations. |
 | 3 | **Articles** *(optional)* | Already have a list of PMIDs? Upload them for Scoring-Only mode. Skip if you want the app to discover articles for you. |
 | 4 | **Retrieve & Score** | Run the pipeline — full retrieval-and-scoring or scoring-only. Watch per-researcher progress in real time. Re-runs only fetch newly added publications. |
 | 5 | **Results** | Per-researcher scored articles with color-coded confidence, threshold slider, and CSV export. |
+
+Want a clean slate? The dashboard has a **Reset application** link that wipes every researcher, article, score, and curation in one click. Useful after exploring with sample data before loading your own roster.
 
 ---
 
@@ -146,13 +148,17 @@ Optional fields are not required for scoring but improve precision. Importing cu
 ## Architecture
 
 ```
-docker compose up
-  ├── frontend   Next.js 14 (App Router) ──── :3002
-  ├── api        FastAPI + scoring engine ─── :8090
-  └── db         MariaDB 11 ────────────────── :3306
+launcher (.command / .bat)
+  └── docker compose up
+        ├── frontend   Next.js 14 ─── host :3002  (browser entry point)
+        │     └── proxies /api/* to ─┐
+        ├── api        FastAPI ──────┘  (docker network only, not host-exposed)
+        └── db         MariaDB 11 ── host :3306
 ```
 
-- **Frontend** — Next.js 14, Tailwind, shadcn/ui
+The browser only talks to the frontend. All `/api/*` calls are same-origin and rewritten through Next.js to the backend over the docker service network. This means there's no second host port to worry about and no CORS surface to attack from other localhost-served pages. The launcher floats the frontend and DB host ports automatically if the defaults are taken.
+
+- **Frontend** — Next.js 14, Tailwind, shadcn/ui. Acts as the API proxy for the browser.
 - **Backend** — FastAPI wrapping the Python scoring engine in `core/` and `features/`. Long-running work (institution discovery, retrieval, scoring) streams progress over Server-Sent Events.
 - **Engine** — The same `core/` and `features/` code used in production at Weill Cornell.
 - **ML** — XGBoost 3.2.0 + isotonic calibration. The XGBoost version is pinned; cross-version model loading causes score drift amplified by the calibrator's step function.
@@ -193,6 +199,7 @@ ReCiter-Desktop/
 | GET  | `/api/institution` | Get current configuration |
 | POST | `/api/researchers/upload` | Upload roster, return detected column mappings |
 | POST | `/api/researchers/import` | Import with confirmed mappings |
+| POST | `/api/researchers/load-sample` | Load bundled 5-researcher sample cohort *(SSE)* |
 | GET  | `/api/researchers` | List all researchers |
 | GET  | `/api/researchers/{id}` | Get researcher detail |
 | POST | `/api/articles/upload` | Upload PMID CSV |
@@ -201,6 +208,7 @@ ReCiter-Desktop/
 | GET  | `/api/pipeline/status` | Get current pipeline state |
 | GET  | `/api/scores/{id}` | Get scores for researcher |
 | GET  | `/api/scores/export` | Export all scores as CSV |
+| POST | `/api/reset` | Wipe all user data (researchers, articles, scores, curations, institution) — preserves API token |
 
 ---
 
