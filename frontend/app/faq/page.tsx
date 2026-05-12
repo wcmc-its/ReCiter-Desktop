@@ -25,7 +25,7 @@ const FAQ_SECTIONS: FAQSection[] = [
       {
         question: "What do I need to get started?",
         answer:
-          "At minimum, you need: (1) Your institution\u2019s email domain (e.g., fredhutch.org) for the institution setup, and (2) A CSV or Excel file with your researchers \u2014 at minimum a unique ID, first name, and last name per row. Optional but helpful fields include email, department, title, doctoral year, and ORCID. A PubMed API key is recommended for faster retrieval (10 requests/second vs 3).",
+          "At minimum, you need: (1) Your institution\u2019s email domain (e.g., fredhutch.org) for the institution setup, and (2) A CSV or Excel file with your researchers \u2014 at minimum a unique ID, first name, and last name per row. Optional but helpful fields include email, department, title, doctoral year, and ORCID. A PubMed API key is recommended for faster retrieval (10 requests/second vs 3). If you just want to see the app in action without preparing a roster, click \u201cLoad sample data\u201d on the Researchers page to populate it with five real Weill Cornell researchers plus their curated accept/reject assertions.",
       },
       {
         question: "What format should my researcher file be in?",
@@ -38,9 +38,19 @@ const FAQ_SECTIONS: FAQSection[] = [
           "It is recommended but not required. Without an API key, PubMed limits you to 3 requests per second. With a key, you get 10 requests per second \u2014 roughly 3x faster for large datasets. You can get a free API key from NCBI at https://www.ncbi.nlm.nih.gov/account/.",
       },
       {
-        question: "Can I run ReCiter Desktop without Docker?",
+        question: "How do I install ReCiter Desktop?",
         answer:
-          "Docker Compose is the recommended way to run ReCiter Desktop as it handles all dependencies automatically. For development, you can run the components separately: MariaDB on port 3306, the FastAPI backend on port 8090 (uvicorn api.main:app), and the Next.js frontend on port 3002 (npm run dev). You will need Python 3.12+, Node.js 20+, and MariaDB 11+ installed.",
+          "Install Docker Desktop (free for personal and small-business use), download or clone the ReCiter-Desktop repository, then double-click Start ReCiter.command on macOS or Start ReCiter.bat on Windows. The launcher picks free host ports automatically, brings up the stack, and opens the app in your default browser. Use the matching Stop script to shut it down — your data is preserved in a Docker volume between runs.",
+      },
+      {
+        question: "Can I run ReCiter Desktop without the launcher script?",
+        answer:
+          "Yes. From the repository directory you can run \"docker compose up\" directly. For native dev (e.g. to get hot reload on the frontend or backend) run the components separately: MariaDB in a container or natively on port 3306, the FastAPI backend on port 8090 (uvicorn api.main:app), and the Next.js frontend on port 3002 (npm run dev). The browser only talks to the frontend; the backend is reached via the Next.js proxy at /api/*. You will need Python 3.12+, Node.js 20+, and MariaDB 11+ installed.",
+      },
+      {
+        question: "How do I clear out all my data and start over?",
+        answer:
+          "Click the “Reset application” link at the bottom of the Dashboard. It wipes every researcher, article, score, and curation, plus the institution configuration, in one click. The local API token is preserved so you don’t have to re-pair the frontend with the backend. After confirming, you’re returned to the Institution Setup wizard.",
       },
     ],
   },
