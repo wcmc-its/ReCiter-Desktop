@@ -39,7 +39,9 @@ cd ReCiter-Desktop
 docker compose up
 ```
 
-Defaults: frontend on `3002`, API on `8090`, MariaDB on `3306`. Override any of them with `FRONTEND_PORT`, `DB_PORT`, or `PUBMED_API_KEY` environment variables.
+Defaults: frontend on `3002`, MariaDB on `3306`. The backend is reached through the frontend's Next.js proxy at `/api/*` — it's not exposed to the host directly. Override frontend or DB ports with `FRONTEND_PORT` / `DB_PORT` environment variables.
+
+For native dev (running `npm run dev` and `uvicorn` separately), the frontend proxies `/api/*` to `http://localhost:8090` by default. Set `API_INTERNAL_URL` to override.
 
 ---
 

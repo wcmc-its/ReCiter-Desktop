@@ -1,7 +1,6 @@
 import { getApiToken } from "./api";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8090";
-
+// Same-origin path — Next.js rewrites /api/* to the backend.
 export function subscribeSSE(
   path: string,
   body: Record<string, unknown>,
@@ -12,7 +11,7 @@ export function subscribeSSE(
 
   (async () => {
     const token = await getApiToken();
-    const res = await fetch(`${API_BASE}${path}`, {
+    const res = await fetch(path, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
