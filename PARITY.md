@@ -38,6 +38,15 @@ Output is a one-line-per-commit log plus a `--stat` summary of the diff. If the 
 
 Append entries as you sync. Newest first.
 
+### 2026-05-13 (b) — incremental-update parity: EDAT date filter + ORCID-added-later handling
+
+Two incremental-mode gaps surfaced while reviewing Desktop's update flow against upstream's. Both fixed in this commit.
+
+**Applied:**
+
+- `PubMedQuery.java:45` — upstream's incremental query window uses `((start:end[EDAT]) OR (start:end[DP]))`, catching both publication date AND PubMed entry date. Desktop's `core/pubmed.py` was using `[PDAT]` alone (publication date only), silently missing late-indexed articles on update runs (e.g., 2024-published article indexed in PubMed in 2026). Ported via new `_incremental_date_filter()` helper applied to both `search_by_name` and `search_by_orcid` queries.
+- *Desktop-only:* first-time ORCID retrieval for a person now ignores `mindate`. Without this, a researcher whose ORCID was added to the identity record after their first pipeline run would never have their pre-mindate ORCID-keyed articles retrieved. Tracked via new `retrieval_log.last_orcid_retrieval_date` column (migration `004`). No upstream counterpart — upstream does ORCID retrieval through the same date-windowed cascade and doesn't have a "first ORCID run" notion since ORCID is treated as part of the identity from initial scoring.
+
 ### 2026-05-13 — 6-month retrospective audit + ORCID retrieval port
 
 Widened the script allowlist (added `xml/retriever/pubmed/`, `algorithm/util/ArticleTranslator.java`, `algorithm/cluster/ReCiterCluster.java`, `engine/`). Reviewed all commits in the 2025-11-13 → 2026-05-13 window. Pin remains `f90aee5e` (upstream HEAD).

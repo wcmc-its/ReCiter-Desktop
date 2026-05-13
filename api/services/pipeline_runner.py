@@ -190,18 +190,32 @@ def _process_one_researcher(
             # Mirrors upstream OrcidRetrievalStrategy (asserted ORCID source):
             # union ORCID-keyed PMIDs into the candidate set when available.
             # Catches articles where PubMed has a misspelled/transliterated name.
+            #
+            # First-time ORCID retrieval for a person ignores mindate so the
+            # full pre-existing ORCID-keyed history is fetched. Without this,
+            # a researcher whose ORCID was added to the identity record AFTER
+            # their first pipeline run would never have their pre-mindate
+            # ORCID-keyed articles retrieved.
+            ran_orcid_retrieval = False
             if core_identity.orcid:
+                first_orcid_run = (
+                    retrieval_log is None
+                    or retrieval_log.last_orcid_retrieval_date is None
+                )
+                orcid_mindate = "" if first_orcid_run else mindate
                 orcid_result = search_by_orcid(
                     orcid=core_identity.orcid,
                     api_key=api_key or "",
-                    mindate=mindate,
+                    mindate=orcid_mindate,
                 )
                 seen = {int(p) for p in search_pmids}
                 added = [p for p in orcid_result["pmids"] if int(p) not in seen]
                 search_pmids.extend(added)
+                ran_orcid_retrieval = True
                 logger.info(
                     f"{person_id}: orcid retrieval count={orcid_result['count']}, "
-                    f"added {len(added)} new pmids"
+                    f"added {len(added)} new pmids "
+                    f"(first_run={first_orcid_run})"
                 )
 
             new_pmids = [p for p in search_pmids if str(p) not in existing_pmids]
@@ -247,14 +261,18 @@ def _process_one_researcher(
                     db.execute(stmt.on_duplicate_key_update(source=stmt.inserted.source))
 
             # Update retrieval log
+            now_utc = datetime.utcnow()
             if retrieval_log:
                 retrieval_log.articles_found = len(new_pmids)
                 retrieval_log.run_id = run_id
+                if ran_orcid_retrieval:
+                    retrieval_log.last_orcid_retrieval_date = now_utc
             else:
                 db.add(RetrievalLog(
                     person_id=person_id,
                     articles_found=len(new_pmids),
                     run_id=run_id,
+                    last_orcid_retrieval_date=now_utc if ran_orcid_retrieval else None,
                 ))
             db.commit()
 

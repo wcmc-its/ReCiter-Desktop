@@ -76,6 +76,7 @@ class RetrievalLog(Base):
     __tablename__ = "retrieval_log"
     person_id = Column(String(128), ForeignKey("identity.person_id", ondelete="CASCADE"), primary_key=True)
     last_retrieval_date = Column(TIMESTAMP, server_default=func.now(), onupdate=func.now())
+    last_orcid_retrieval_date = Column(TIMESTAMP, nullable=True)
     articles_found = Column(Integer, default=0)
     run_id = Column(Integer, ForeignKey("pipeline_run.run_id", ondelete="SET NULL"), nullable=True)
 

@@ -314,6 +314,22 @@ def _build_author_term(last_name: str, first_name: str, full_name: bool = False)
     return f"{name_part}[au]"
 
 
+def _incremental_date_filter(mindate: str) -> str:
+    """Build a PubMed date filter that matches upstream's incremental window.
+
+    Upstream ReCiter (PubMedQuery.java) uses both Entry Date (EDAT) AND
+    Publication Date (DP/PDAT) so late-indexed articles — pub_year in the
+    past, indexed in PubMed recently — are not silently missed on
+    incremental update runs. PDAT alone would skip them.
+    """
+    if not mindate:
+        return ""
+    return (
+        f' AND (("{mindate}"[EDAT] : "3000"[EDAT])'
+        f' OR ("{mindate}"[PDAT] : "3000"[PDAT]))'
+    )
+
+
 def esearch_count(query: str, api_key: str = "") -> int:
     """Get the result count for an esearch query without fetching IDs.
 
@@ -427,8 +443,10 @@ def search_by_name(
     lenient_base = _build_author_term(last_name, first_name, full_name=False)
     strict_base = _build_author_term(last_name, first_name, full_name=True)
 
-    # Append date filter for incremental retrieval (ONLY_NEWLY_ADDED_PUBLICATIONS)
-    date_filter = f' AND ("{mindate}"[PDAT] : "3000"[PDAT])' if mindate else ""
+    # Append date filter for incremental retrieval (ONLY_NEWLY_ADDED_PUBLICATIONS).
+    # Uses EDAT OR PDAT (matches upstream PubMedQuery.java) so late-indexed
+    # articles are not silently missed on update runs.
+    date_filter = _incremental_date_filter(mindate)
     lenient_query = lenient_base + date_filter
     strict_query = strict_base + date_filter
 
@@ -525,8 +543,7 @@ def search_by_orcid(orcid: str, api_key: str = "", mindate: str = "") -> dict:
     if not normalized:
         return result
 
-    date_filter = f' AND ("{mindate}"[PDAT] : "3000"[PDAT])' if mindate else ""
-    query = f"{normalized}[auid]" + date_filter
+    query = f"{normalized}[auid]" + _incremental_date_filter(mindate)
     result["query"] = query
 
     count = esearch_count(query, api_key)

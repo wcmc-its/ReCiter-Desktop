@@ -62,6 +62,7 @@ CREATE TABLE IF NOT EXISTS person_article_score (
 CREATE TABLE IF NOT EXISTS retrieval_log (
     person_id VARCHAR(128) PRIMARY KEY,
     last_retrieval_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    last_orcid_retrieval_date TIMESTAMP NULL DEFAULT NULL,
     articles_found INT DEFAULT 0,
     FOREIGN KEY (person_id) REFERENCES identity(person_id) ON DELETE CASCADE
 );
