@@ -1,0 +1,110 @@
+name: Upstream parity check
+
+on:
+  schedule:
+    # Mondays 09:00 UTC — once a week is enough given upstream cadence.
+    - cron: '0 9 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check-drift:
+    runs-on: ubuntu-latest
+    env:
+      DRIFT_LABEL: parity-drift
+      ISSUE_TITLE: 'Upstream parity drift detected'
+    steps:
+      - name: Check out Desktop repo
+        uses: actions/checkout@v4
+
+      - name: Clone upstream ReCiter (full history)
+        run: |
+          git clone --quiet https://github.com/wcmc-its/ReCiter.git /tmp/reciter-upstream
+
+      - name: Run parity check
+        id: check
+        run: |
+          set -o pipefail
+          RECITER_REPO=/tmp/reciter-upstream scripts/check-upstream-parity.sh \
+            | tee drift-report.txt
+          # The script always exits 0. Detect drift by checking for either
+          # of the "no drift" sentinel lines it prints.
+          if grep -qE 'Pin is at upstream HEAD|pin is current for the mirrored slice' drift-report.txt; then
+            echo "drift=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "drift=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Ensure drift label exists
+        if: steps.check.outputs.drift == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh label create "$DRIFT_LABEL" \
+            --description "Upstream ReCiter has commits not yet reviewed against Desktop" \
+            --color 'D93F0B' \
+            --force >/dev/null
+
+      - name: Open or update tracking issue
+        if: steps.check.outputs.drift == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          body_file=$(mktemp)
+          {
+            echo "Detected upstream commits in \`wcmc-its/ReCiter\` that touch parity-mirrored paths since the SHA pinned in \`.upstream-ref\`."
+            echo
+            echo "## Drift report"
+            echo
+            echo '```'
+            cat drift-report.txt
+            echo '```'
+            echo
+            echo "## How to clear this issue"
+            echo
+            echo "1. Review each upstream commit listed above."
+            echo "2. For each: either port the change into Desktop, **or** record it as N/A / deferred in \`PARITY.md\`'s changelog (with rationale)."
+            echo "3. Bump the ReCiter SHA in \`.upstream-ref\` to upstream HEAD."
+            echo "4. The next scheduled run of this workflow will close the issue automatically."
+            echo
+            echo "_Updated by \`.github/workflows/upstream-parity.yml\` on $(date -u +%Y-%m-%dT%H:%M:%SZ)._"
+          } > "$body_file"
+
+          existing=$(gh issue list \
+            --label "$DRIFT_LABEL" \
+            --state open \
+            --json number \
+            --jq '.[0].number')
+
+          if [ -n "$existing" ]; then
+            echo "Updating existing issue #$existing"
+            gh issue edit "$existing" --body-file "$body_file"
+          else
+            echo "Opening new tracking issue"
+            gh issue create \
+              --title "$ISSUE_TITLE" \
+              --label "$DRIFT_LABEL" \
+              --body-file "$body_file"
+          fi
+
+      - name: Close tracking issue if drift cleared
+        if: steps.check.outputs.drift == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          existing=$(gh issue list \
+            --label "$DRIFT_LABEL" \
+            --state open \
+            --json number \
+            --jq '.[0].number' 2>/dev/null || echo "")
+
+          if [ -n "$existing" ]; then
+            echo "Closing issue #$existing — pin is current"
+            gh issue close "$existing" \
+              --comment "Pin caught up to upstream HEAD. Closing automatically."
+          else
+            echo "No open drift issue and no drift detected — nothing to do."
+          fi

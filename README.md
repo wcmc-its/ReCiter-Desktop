@@ -108,6 +108,18 @@ The feedback model activates automatically when you import accept/reject data (a
 
 ---
 
+## For non-WCM institutions
+
+ReCiter Desktop is designed to work against any researcher cohort without retraining the models. A few practical tips for cross-institutional runs:
+
+- **Populate the ORCID column where available.** The pipeline now queries PubMed by `[auid]` and unions those PMIDs with the name-based candidate set, recovering articles where PubMed indexed the author under a misspelled or transliterated name. No effect when ORCID is blank.
+- **Review the Institution Setup classifications carefully.** Home / Collaborating / Skip choices affect the affiliation feature. Department names should match (or have synonyms configured against) the [ScienceMetrix](https://www.science-metrix.com/) journal-subfield taxonomy used by the journal-subfield feature.
+- **Pin the commit SHA you ran.** For reproducibility in papers or institutional reports, record the commit hash from `git rev-parse HEAD` alongside the run date. Algorithm improvements continue to land — pinning makes any future re-run diffable.
+- **Parity with upstream ReCiter** (the full Java engine) is tracked in [`PARITY.md`](./PARITY.md) with a pinned SHA in [`.upstream-ref`](./.upstream-ref). Run `scripts/check-upstream-parity.sh` to surface upstream commits since the pin.
+- **Large cohorts (~800+ researchers) currently take hours to retrieve.** Batched/parallelized retrieval is a known pending improvement.
+
+---
+
 ## Operating modes
 
 - **Full retrieval and scoring** — Search PubMed by researcher name, discover candidate articles, then score them. Use when you want to find publications you may not already know about.

@@ -54,6 +54,9 @@ CLAUDE.local.md
 .claude/
 .claudeignore
 
+# Local research / decision notes (not for distribution)
+RESEARCH-NOTES.md
+
 # Local dev artifacts (screenshots, mockups, snapshots, MCP caches, uploads)
 *.png
 /*.html
