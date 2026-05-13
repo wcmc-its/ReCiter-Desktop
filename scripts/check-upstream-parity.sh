@@ -32,9 +32,13 @@ fi
 paths=(
   'src/main/resources/application.properties'
   'src/main/java/reciter/algorithm/cluster/article/retrieval/'
+  'src/main/java/reciter/xml/retriever/pubmed/'
   'src/main/java/reciter/pubmed/'
   'src/main/java/reciter/algorithm/evidence/'
   'src/main/java/reciter/algorithm/article/score/'
+  'src/main/java/reciter/algorithm/util/ArticleTranslator.java'
+  'src/main/java/reciter/algorithm/cluster/ReCiterCluster.java'
+  'src/main/java/reciter/engine/'
   'src/main/java/reciter/model/article/'
 )
 

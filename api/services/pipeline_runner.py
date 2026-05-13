@@ -28,7 +28,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
 from core.identity import Identity as CoreIdentity
 from core.article import Article as CoreArticle, Author, MeshHeading
-from core.pubmed import fetch_articles, search_by_name
+from core.pubmed import fetch_articles, search_by_name, search_by_orcid
 from core.target_author import identify_target_author
 from core.feature_generator import compute_features
 from core.scoring import score_articles
@@ -178,7 +178,7 @@ def _process_one_researcher(
                 strict_threshold=strict_threshold,
                 mindate=mindate,
             )
-            search_pmids = search_result["pmids"]
+            search_pmids = list(search_result["pmids"])
             query_type = search_result["query_type"]
             logger.info(
                 f"{person_id}: retrieval strategy={query_type}, "
@@ -186,6 +186,24 @@ def _process_one_researcher(
                 f"strict_count={search_result.get('strict_count')}, "
                 f"pmids_returned={len(search_pmids)}"
             )
+
+            # Mirrors upstream OrcidRetrievalStrategy (asserted ORCID source):
+            # union ORCID-keyed PMIDs into the candidate set when available.
+            # Catches articles where PubMed has a misspelled/transliterated name.
+            if core_identity.orcid:
+                orcid_result = search_by_orcid(
+                    orcid=core_identity.orcid,
+                    api_key=api_key or "",
+                    mindate=mindate,
+                )
+                seen = {int(p) for p in search_pmids}
+                added = [p for p in orcid_result["pmids"] if int(p) not in seen]
+                search_pmids.extend(added)
+                logger.info(
+                    f"{person_id}: orcid retrieval count={orcid_result['count']}, "
+                    f"added {len(added)} new pmids"
+                )
+
             new_pmids = [p for p in search_pmids if str(p) not in existing_pmids]
             if new_pmids:
                 articles = fetch_articles(new_pmids, api_key=api_key or "")

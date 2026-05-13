@@ -320,6 +320,12 @@ def esearch_count(query: str, api_key: str = "") -> int:
     This is the equivalent of ReCiter's getNumberOfResults() —
     a cheap count-only call used to decide strict vs lenient strategy.
     """
+    # Mirrors AbstractRetrievalStrategy guard from upstream 0c75df92:
+    # short-circuit empty or "()" terms instead of round-tripping PubMed.
+    stripped = (query or "").strip()
+    if not stripped or stripped == "()":
+        _log.info(f"Skipping degenerate count query [{stripped}]")
+        return 0
     _rate_limit(api_key)
     params = {
         "db": "pubmed",
@@ -481,4 +487,55 @@ def search_by_name(
         f"strict threshold {strict_threshold}, skipping retrieval"
     )
     result["query_type"] = "skipped"
+    return result
+
+
+def _normalize_orcid(orcid: str) -> str:
+    """Strip URL prefixes and whitespace from an ORCID."""
+    if not orcid:
+        return ""
+    o = orcid.strip()
+    for prefix in ("https://orcid.org/", "http://orcid.org/", "orcid.org/"):
+        if o.startswith(prefix):
+            o = o[len(prefix):]
+            break
+    return o.strip().strip("/")
+
+
+def search_by_orcid(orcid: str, api_key: str = "", mindate: str = "") -> dict:
+    """Search PubMed by ORCID using the [auid] qualifier.
+
+    Mirrors upstream OrcidRetrievalStrategy (commit 7dfa0754): a precise
+    retrieval path that catches articles where the author's name in PubMed
+    is misspelled or transliterated differently from the identity record.
+    Lenient and strict are equivalent because [auid] is inherently precise,
+    so no threshold cascade is needed.
+
+    Returns:
+        {
+            "pmids": [...],
+            "query": str,
+            "count": int,
+            "orcid": str | None,
+        }
+        An empty/invalid ORCID returns count=0 and an empty pmids list.
+    """
+    normalized = _normalize_orcid(orcid)
+    result = {"pmids": [], "query": "", "count": 0, "orcid": normalized or None}
+    if not normalized:
+        return result
+
+    date_filter = f' AND ("{mindate}"[PDAT] : "3000"[PDAT])' if mindate else ""
+    query = f"{normalized}[auid]" + date_filter
+    result["query"] = query
+
+    count = esearch_count(query, api_key)
+    result["count"] = count
+    if count == 0:
+        _log.info(f"ORCID search '{query}': 0 results")
+        return result
+
+    pmids = _esearch_fetch_ids(query, count, api_key)
+    result["pmids"] = pmids
+    _log.info(f"ORCID search '{query}': {count} count, fetched {len(pmids)}")
     return result
