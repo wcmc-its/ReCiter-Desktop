@@ -1,5 +1,6 @@
 import csv
 import io
+from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
@@ -7,11 +8,23 @@ from sqlalchemy.orm import Session
 from api.database import get_db
 from api.models import Identity, Article, PersonArticle, PersonArticleScore, Curation
 from api.services.orcid_inference import infer_orcids
+from api.services.version import get_version
 
 router = APIRouter(prefix="/api/scores", tags=["scores"])
 
 
 _FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _provenance_header() -> str:
+    """One-line provenance comment written at the top of every CSV export.
+
+    Lets a downstream consumer trace any artifact back to the code revision
+    that produced it. `#`-prefixed so pandas / R / tidyverse readers can
+    skip it via the standard `comment` parameter.
+    """
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return f"# ReCiter Desktop {get_version()} | exported: {ts}\n"
 
 
 def _safe_cell(v):
@@ -45,6 +58,7 @@ def export_scores(
     ).all()
 
     output = io.StringIO()
+    output.write(_provenance_header())
     writer = csv.writer(output)
     writer.writerow([
         "person_id", "first_name", "last_name", "pmid",
@@ -89,6 +103,7 @@ def export_orcid_report(mode: str = "feedback", db: Session = Depends(get_db)):
     use_curations = mode == "feedback"
     results = infer_orcids(db, use_curations=use_curations)
     output = io.StringIO()
+    output.write(_provenance_header())
     writer = csv.writer(output)
     writer.writerow([
         "person_id", "first_name", "last_name", "inferred_orcid",
